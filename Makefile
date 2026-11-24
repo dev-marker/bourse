@@ -1,4 +1,4 @@
-.PHONY: up down test test-race bench
+.PHONY: up down test test-race bench fuzz
 
 up:
 	docker compose up -d --wait
@@ -14,3 +14,6 @@ test-race:
 
 bench:
 	go test -run '^$$' -bench . -benchmem ./...
+
+fuzz:
+	go test -fuzz=FuzzBook -fuzztime=20s ./internal/book/

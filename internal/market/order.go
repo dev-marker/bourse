@@ -69,3 +69,22 @@ func (o Order) Validate(in Instrument) error {
 	}
 	return nil
 }
+
+// Opposite is the side an order trades against.
+func (s Side) Opposite() Side {
+	if s == Buy {
+		return Sell
+	}
+	return Buy
+}
+
+// CanTake reports whether o may trade against a resting order at price p.
+func (o Order) CanTake(p Price) bool {
+	if o.Type == Market {
+		return true
+	}
+	if o.Side == Buy {
+		return o.Price >= p
+	}
+	return o.Price <= p
+}
