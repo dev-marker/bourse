@@ -4,8 +4,10 @@ package engine
 import (
 	"cmp"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -43,6 +45,11 @@ type Event struct {
 	Price market.Price
 	Qty   market.Qty
 	Err   error // why, for a rejection
+
+	// Whose order it is, and its side. In a trade, who placed the maker too.
+	Account, ClientID           string
+	Side                        market.Side
+	MakerAccount, MakerClientID string
 }
 
 // Report is everything one command did, in order.
@@ -91,6 +98,8 @@ type Engine struct {
 	snapped uint64 // the last input the snapshot covers
 	// startup is how New got the engine back to where it was.
 	startup Recovery
+	// synced is where the engine says how far the journal is on disk.
+	synced *os.File
 }
 
 // Recovery says how the engine got back to where it was, when New made it.
@@ -103,6 +112,9 @@ type Recovery struct {
 
 // journalFile is the journal's name, in the engine's folder.
 const journalFile = "engine.journal"
+
+// syncedFile holds the number of the last input the journal has on disk.
+const syncedFile = "engine.synced"
 
 const (
 	snapshotFile  = "engine.snapshot"
@@ -131,6 +143,17 @@ func New(dir string, instruments ...market.Instrument) (*Engine, error) {
 		return nil, fmt.Errorf("recovering the journal: %w", err)
 	}
 	e.journal = j
+	// Inputs the last run wrote but never synced were just replayed, so they go to disk first.
+	if err := j.Sync(); err != nil {
+		return nil, err
+	}
+	e.synced, err = os.OpenFile(filepath.Join(dir, syncedFile), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.markSynced(); err != nil {
+		return nil, err
+	}
 	e.startup.Cut, e.startup.Took = cut, time.Since(start)
 	return e, nil
 }
@@ -171,6 +194,7 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 	wg.Wait()
 	e.journal.Close()
+	e.synced.Close()
 }
 
 // record is the engine's front door. It writes every command to the journal, waits until the disk
@@ -217,8 +241,17 @@ func (e *Engine) write(batch []command) error {
 			return err
 		}
 	}
-	e.err = e.journal.Sync()
+	if e.err = e.journal.Sync(); e.err == nil {
+		e.err = e.markSynced()
+	}
 	return e.err
+}
+
+// markSynced tells whoever follows the journal that every input up to e.input is on disk. It's never
+// synced itself: after a crash, it can only be behind the journal, never ahead of it.
+func (e *Engine) markSynced() error {
+	_, err := e.synced.WriteAt(binary.LittleEndian.AppendUint64(nil, e.input), 0)
+	return err
 }
 
 // run is the symbol's goroutine, the only code that ever touches its book. All it gets is in the journal.
@@ -247,21 +280,22 @@ func (s *symbol) submit(o market.Order) Report {
 	r := Report{OrderID: o.ID}
 	res, err := s.book.Submit(o)
 	if err != nil {
-		s.emit(&r, Event{Kind: Rejected, Order: o.ID, Err: err})
+		s.emit(&r, &o, Event{Kind: Rejected, Err: err})
 		return r
 	}
-	s.emit(&r, Event{Kind: Accepted, Order: o.ID, Price: o.Price, Qty: o.Qty})
+	s.emit(&r, &o, Event{Kind: Accepted, Price: o.Price, Qty: o.Qty})
 	for _, t := range res.Trades {
-		s.emit(&r, Event{Kind: Traded, Order: o.ID, Maker: t.Maker, Price: t.Price, Qty: t.Qty})
+		s.emit(&r, &o, Event{Kind: Traded, Maker: t.Maker, Price: t.Price, Qty: t.Qty,
+			MakerAccount: t.MakerAccount, MakerClientID: t.MakerClientID})
 	}
-	for _, id := range res.Removed {
-		s.emit(&r, Event{Kind: Cancelled, Order: id})
+	for _, m := range res.Removed {
+		s.emit(&r, &m, Event{Kind: Cancelled, Price: m.Price, Qty: m.Qty})
 	}
 	if res.Rested > 0 {
-		s.emit(&r, Event{Kind: Rested, Order: o.ID, Price: o.Price, Qty: res.Rested})
+		s.emit(&r, &o, Event{Kind: Rested, Price: o.Price, Qty: res.Rested})
 	}
 	if res.Cancelled > 0 {
-		s.emit(&r, Event{Kind: Cancelled, Order: o.ID, Qty: res.Cancelled})
+		s.emit(&r, &o, Event{Kind: Cancelled, Qty: res.Cancelled})
 	}
 	return r
 }
@@ -269,19 +303,21 @@ func (s *symbol) submit(o market.Order) Report {
 // cancel takes an order out of the book, if it's still there, and if it's this account's.
 func (s *symbol) cancel(id uint64, account string) Report {
 	r := Report{OrderID: id}
-	if o, ok := s.book.Order(id); !ok || o.Account != account {
-		s.emit(&r, Event{Kind: Rejected, Order: id, Err: ErrNotFound})
+	o, ok := s.book.Order(id)
+	if !ok || o.Account != account {
+		s.emit(&r, &market.Order{ID: id, Account: account}, Event{Kind: Rejected, Err: ErrNotFound})
 		return r
 	}
 	s.book.Cancel(id)
-	s.emit(&r, Event{Kind: Cancelled, Order: id})
+	s.emit(&r, &o, Event{Kind: Cancelled, Price: o.Price, Qty: o.Qty})
 	return r
 }
 
-// emit gives ev the symbol's next sequence number, and adds it to the report.
-func (s *symbol) emit(r *Report, ev Event) {
+// emit numbers ev, says which order it's about and whose it is, and adds it to the report.
+func (s *symbol) emit(r *Report, o *market.Order, ev Event) {
 	s.seq++
-	ev.Seq = s.seq
+	ev.Seq, ev.Order = s.seq, o.ID
+	ev.Account, ev.ClientID, ev.Side = o.Account, o.ClientID, o.Side
 	r.Events = append(r.Events, ev)
 }
 

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package bourse.v1;
+
+import "bourse/v1/engine.proto";
+
+// Execution is one of the engine's events, on its way out to Kafka. seq counts a symbol's executions
+// from one, with no gaps, so a consumer can apply them in order and drop any it has already seen.
+message Execution {
+  string symbol = 1;
+  uint64 seq = 2;
+  uint64 input = 3; // the journal entry that caused it
+  int64 time = 4; // when the engine took that input, in UTC nanoseconds
+  EventKind kind = 5;
+  uint64 order_id = 6; // the order it's about, the taker in a trade
+  string account = 7;
+  string client_id = 8;
+  Side side = 9;
+  int64 price = 10; // in the instrument's smallest unit: cents, for everything we trade
+  int64 qty = 11;
+  uint64 maker_id = 12; // in a trade, the resting order, and who placed it
+  string maker_account = 13;
+  string maker_client_id = 14;
+  string reason = 15; // why, for a rejection
+}

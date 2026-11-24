@@ -25,13 +25,6 @@ import (
 // dataDir is where the engine keeps what it must never lose.
 const dataDir = "var"
 
-// instruments are what this engine trades.
-var instruments = []market.Instrument{
-	{Symbol: "ACME", Decimals: 2, TickSize: 1, LotSize: 1},
-	{Symbol: "GLBX", Decimals: 2, TickSize: 5, LotSize: 10},
-	{Symbol: "NOVA", Decimals: 2, TickSize: 1, LotSize: 1},
-}
-
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
@@ -58,7 +51,7 @@ func run(log *slog.Logger) error {
 	errs := make(chan error, 2)
 	go func() { errs <- hs.Serve(hl) }()
 
-	eng, err := engine.New(dataDir, instruments...)
+	eng, err := engine.New(dataDir, market.Listed...)
 	if err != nil {
 		return err
 	}
@@ -81,7 +74,7 @@ func run(log *slog.Logger) error {
 
 	go func() { errs <- gs.Serve(gl) }()
 	ready.Store(true)
-	log.Info("engine ready", "grpc", ":9083", "http", ":8083", "symbols", len(instruments))
+	log.Info("engine ready", "grpc", ":9083", "http", ":8083", "symbols", len(market.Listed))
 
 	select {
 	case <-ctx.Done():

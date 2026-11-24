@@ -22,6 +22,14 @@ type Instrument struct {
 	LotSize  Qty   // every quantity is a multiple of this
 }
 
+// Listed is every instrument the exchange trades. The engine and everything that replays its journal
+// must agree on it, so it lives here, once.
+var Listed = []Instrument{
+	{Symbol: "ACME", Decimals: 2, TickSize: 1, LotSize: 1},
+	{Symbol: "GLBX", Decimals: 2, TickSize: 5, LotSize: 10},
+	{Symbol: "NOVA", Decimals: 2, TickSize: 1, LotSize: 1},
+}
+
 var (
 	ErrBadPrice = errors.New("not a valid price")
 	ErrOffTick  = errors.New("price is not a multiple of the tick size")

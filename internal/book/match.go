@@ -16,6 +16,9 @@ type Trade struct {
 	Maker, Taker uint64
 	Price        market.Price
 	Qty          market.Qty
+
+	// Who placed the maker, so the trade can be settled without asking the book.
+	MakerAccount, MakerClientID string
 }
 
 // Result is what happened to an incoming order.
@@ -23,7 +26,8 @@ type Result struct {
 	Trades    []Trade
 	Rested    market.Qty // left waiting in the book
 	Cancelled market.Qty // thrown away: IOC and market leftovers
-	Removed   []uint64   // resting orders of the same account, cancelled to prevent a self-trade
+	// Resting orders of the same account, as they were, cancelled to prevent a self-trade.
+	Removed []market.Order
 }
 
 // Submit matches an incoming order against the book, and rests what's left if it may.
@@ -49,12 +53,13 @@ func (b *Book) Submit(o market.Order) (Result, error) {
 		}
 		maker := l.head
 		if maker.order.Account == o.Account {
-			res.Removed = append(res.Removed, maker.order.ID)
+			res.Removed = append(res.Removed, maker.order)
 			b.remove(maker)
 			continue
 		}
 		qty := min(left, maker.order.Qty)
-		res.Trades = append(res.Trades, Trade{Maker: maker.order.ID, Taker: o.ID, Price: l.price, Qty: qty})
+		res.Trades = append(res.Trades, Trade{Maker: maker.order.ID, Taker: o.ID, Price: l.price, Qty: qty,
+			MakerAccount: maker.order.Account, MakerClientID: maker.order.ClientID})
 		b.fill(maker, qty)
 		left -= qty
 	}

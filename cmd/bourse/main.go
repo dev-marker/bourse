@@ -8,6 +8,9 @@
 //	bourse proxy                   sign every request on :8079, and pass it on to the gateway
 //	bourse proxy :8078             the same, on another port, for a second key
 //	bourse burst 20                20 orders through the gateway at once, and what's left after them
+//	bourse events                  every execution, as it's published to Kafka
+//	bourse events stats            how many executions arrive each second, and how late
+//	bourse events check            every symbol's seqs on the whole topic: no gaps, no duplicates
 package main
 
 import (
@@ -43,6 +46,9 @@ func run(args []string) error {
 			addr = args[1] // a second proxy, for a second account
 		}
 		return proxy(addr)
+	}
+	if len(args) > 0 && args[0] == "events" {
+		return events(strings.Join(args[1:], " "))
 	}
 	if len(args) == 2 && args[0] == "burst" {
 		n, _ := strconv.Atoi(args[1])

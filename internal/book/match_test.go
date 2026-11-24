@@ -38,7 +38,7 @@ func sell(price market.Price, qty market.Qty, tif market.TimeInForce) market.Ord
 
 // tr is a trade against our incoming order 10.
 func tr(maker uint64, price market.Price, qty market.Qty) book.Trade {
-	return book.Trade{Maker: maker, Taker: 10, Price: price, Qty: qty}
+	return book.Trade{Maker: maker, Taker: 10, Price: price, Qty: qty, MakerAccount: "maker"}
 }
 
 func TestSubmit(t *testing.T) {
@@ -79,8 +79,11 @@ func postOnly(o market.Order) market.Order {
 func TestSelfTrade(t *testing.T) {
 	o := buy(10127, 100, market.GTC)
 	o.Account = "maker"
-	got, _ := standard().Submit(o)
-	want := book.Result{Rested: 100, Removed: []uint64{1, 2}}
+	b := standard()
+	one, _ := b.Order(1)
+	two, _ := b.Order(2)
+	got, _ := b.Submit(o)
+	want := book.Result{Rested: 100, Removed: []market.Order{one, two}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
