@@ -17,6 +17,7 @@ bench:
 
 fuzz:
 	go test -fuzz=FuzzBook -fuzztime=20s ./internal/book/
+	go test -fuzz=FuzzEntry -fuzztime=20s ./internal/journal/
 
 flow:
 	@mkdir -p tmp

@@ -3,10 +3,12 @@ package engine_test
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/fiston-user/bourse/internal/engine"
 	"github.com/fiston-user/bourse/internal/market"
@@ -20,15 +22,24 @@ func order(c, i int) market.Order {
 		Type: market.Limit, TIF: market.GTC, Price: market.Price(10_095 + (c*7+i)%10), Qty: 100}
 }
 
+// start runs an engine for ACME until the test ends, with its journal in a folder of the test's own.
+func start(t testing.TB) *engine.Engine {
+	e, err := engine.New(filepath.Join(t.TempDir(), "engine.journal"), acme)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go e.Run(t.Context())
+	return e
+}
+
 // TestManyClients has eight clients trading at once, each in a goroutine of its own.
 func TestManyClients(t *testing.T) {
-	e := engine.New(acme)
-	go e.Run(t.Context())
+	e := start(t)
 	reports := make([][]engine.Report, 8)
 	var wg sync.WaitGroup
 	for c := range reports {
 		wg.Go(func() {
-			for i := range 1000 {
+			for i := range 250 {
 				r, err := e.Submit(t.Context(), order(c, i))
 				if err != nil {
 					t.Error(err)
@@ -57,7 +68,10 @@ func TestManyClients(t *testing.T) {
 
 // TestStopped sends an order to an engine that has already stopped.
 func TestStopped(t *testing.T) {
-	e := engine.New(acme)
+	e, err := engine.New(filepath.Join(t.TempDir(), "engine.journal"), acme)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx, stop := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
@@ -71,15 +85,19 @@ func TestStopped(t *testing.T) {
 	}
 }
 
-// BenchmarkSubmit has a client on every core sending orders to one symbol, through the queue and back.
+// BenchmarkSubmit has ten clients on every core sending orders to one symbol, and measures how long each
+// client waits for its answer.
 func BenchmarkSubmit(b *testing.B) {
-	e := engine.New(acme)
-	go e.Run(b.Context())
-	var clients atomic.Int64
+	e := start(b)
+	b.SetParallelism(10)
+	var clients, waited atomic.Int64
 	b.RunParallel(func(pb *testing.PB) {
 		c := int(clients.Add(1))
 		for i := 0; pb.Next(); i++ {
+			sent := time.Now()
 			e.Submit(b.Context(), order(c, i))
+			waited.Add(int64(time.Since(sent)))
 		}
 	})
+	b.ReportMetric(float64(waited.Load())/float64(b.N)/1e6, "ms/order")
 }

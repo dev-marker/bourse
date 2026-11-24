@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/fiston-user/bourse/internal/book"
+	"github.com/fiston-user/bourse/internal/journal"
 	"github.com/fiston-user/bourse/internal/market"
 )
 
@@ -50,7 +52,14 @@ type Report struct {
 type command struct {
 	order  market.Order
 	cancel uint64 // the order to cancel, or zero for a new order
-	reply  chan Report
+	reply  chan answer
+	to     *symbol // the book it's for
+}
+
+// answer is what a command gets back: its report, or why it never reached the book.
+type answer struct {
+	Report
+	err error
 }
 
 // symbol is one book, and everything only its goroutine may touch.
@@ -68,39 +77,97 @@ const queue = 1024
 type Engine struct {
 	symbols map[string]*symbol
 	stopped chan struct{} // closed when Run returns
+	inbox   chan command  // every command, on its way to the journal
+	journal *journal.Writer
+	input   uint64 // the last input written to the journal
+	err     error  // why the journal failed, if it did: then nothing more gets through
 }
 
-// New returns an engine for these instruments. Nothing trades until Run.
-func New(instruments ...market.Instrument) *Engine {
-	e := &Engine{symbols: map[string]*symbol{}, stopped: make(chan struct{})}
+// New returns an engine for these instruments, with a new journal at path. Nothing trades until Run.
+func New(path string, instruments ...market.Instrument) (*Engine, error) {
+	j, err := journal.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	e := &Engine{
+		symbols: map[string]*symbol{},
+		stopped: make(chan struct{}),
+		inbox:   make(chan command, queue),
+		journal: j,
+	}
 	for _, in := range instruments {
 		e.symbols[in.Symbol] = &symbol{inbox: make(chan command, queue), book: book.New(in)}
 	}
-	return e
+	return e, nil
 }
 
-// Run starts every symbol's goroutine, and returns when ctx is done and they have all stopped.
+// Run starts the engine. It returns when ctx is done, and every command in the journal has reached its book.
 func (e *Engine) Run(ctx context.Context) {
 	defer close(e.stopped)
 	var wg sync.WaitGroup
 	for _, s := range e.symbols {
-		wg.Go(func() { s.run(ctx) })
+		wg.Go(s.run)
+	}
+	e.record(ctx)
+	for _, s := range e.symbols {
+		close(s.inbox)
 	}
 	wg.Wait()
+	e.journal.Close()
 }
 
-// run is the symbol's goroutine, the only code that ever touches its book.
-func (s *symbol) run(ctx context.Context) {
+// record is the engine's front door. It writes every command to the journal, waits until the disk
+// has it, and only then hands it to its book.
+func (e *Engine) record(ctx context.Context) {
+	var batch []command
 	for {
 		select {
-		case c := <-s.inbox:
-			if c.cancel != 0 {
-				c.reply <- s.cancel(c.cancel)
-			} else {
-				c.reply <- s.submit(c.order)
-			}
+		case c := <-e.inbox:
+			batch = append(batch[:0], c)
 		case <-ctx.Done():
 			return
+		}
+		// Group commit: every command that's already waiting joins the batch, and one sync covers them all.
+		for len(batch) < queue && len(e.inbox) > 0 {
+			batch = append(batch, <-e.inbox)
+		}
+		if err := e.write(batch); err != nil {
+			for _, c := range batch {
+				c.reply <- answer{err: err}
+			}
+			continue
+		}
+		for _, c := range batch {
+			c.to.inbox <- c
+		}
+	}
+}
+
+// write appends the batch to the journal and syncs it. A journal that failed once is never trusted again.
+func (e *Engine) write(batch []command) error {
+	if e.err != nil {
+		return e.err
+	}
+	for _, c := range batch {
+		e.input++
+		entry := journal.Entry{Seq: e.input, Time: time.Now().UnixNano(),
+			Symbol: c.to.book.Instrument.Symbol, Cancel: c.cancel, Order: c.order}
+		if err := e.journal.Append(&entry); err != nil {
+			e.err = err
+			return err
+		}
+	}
+	e.err = e.journal.Sync()
+	return e.err
+}
+
+// run is the symbol's goroutine, the only code that ever touches its book. All it gets is in the journal.
+func (s *symbol) run() {
+	for c := range s.inbox {
+		if c.cancel != 0 {
+			c.reply <- answer{Report: s.cancel(c.cancel)}
+		} else {
+			c.reply <- answer{Report: s.submit(c.order)}
 		}
 	}
 }
@@ -172,23 +239,23 @@ func (e *Engine) Cancel(ctx context.Context, sym string, id uint64) (Report, err
 
 // send puts c in the symbol's queue, and waits for the answer.
 func (e *Engine) send(ctx context.Context, s *symbol, c command) (Report, error) {
-	c.reply = make(chan Report, 1)
+	c.to, c.reply = s, make(chan answer, 1)
 	select {
-	case s.inbox <- c:
+	case e.inbox <- c:
 	case <-ctx.Done():
 		return Report{}, ctx.Err()
 	case <-e.stopped:
 		return Report{}, ErrStopped
 	}
 	select {
-	case r := <-c.reply:
-		return r, nil
+	case a := <-c.reply:
+		return a.Report, a.err
 	case <-e.stopped:
 	}
 	// It has stopped, but it may have answered first: select picks at random when both are ready.
 	select {
-	case r := <-c.reply:
-		return r, nil
+	case a := <-c.reply:
+		return a.Report, a.err
 	default:
 		return Report{}, ErrStopped
 	}

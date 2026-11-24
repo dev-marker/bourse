@@ -46,10 +46,14 @@ var (
 	ErrBadType     = errors.New("type must be limit or market")
 	ErrMarketRests = errors.New("a market order can't wait in the book")
 	ErrBadTIF      = errors.New("time in force must be GTC, IOC or FOK")
+	ErrLongName    = errors.New("an account or client order ID can't be longer than 64 bytes")
 )
 
 // Validate checks an order against its instrument before it gets anywhere near a book.
 func (o Order) Validate(in Instrument) error {
+	if len(o.Account) > 64 || len(o.ClientID) > 64 {
+		return ErrLongName
+	}
 	if o.Side != Buy && o.Side != Sell {
 		return ErrBadSide
 	}

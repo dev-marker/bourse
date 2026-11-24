@@ -22,6 +22,9 @@ import (
 	"github.com/fiston-user/bourse/internal/market"
 )
 
+// journalPath is where the engine writes down every input, before any book sees it.
+const journalPath = "var/engine.journal"
+
 // instruments are what this engine trades.
 var instruments = []market.Instrument{
 	{Symbol: "ACME", Decimals: 2, TickSize: 1, LotSize: 1},
@@ -50,7 +53,10 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	eng := engine.New(instruments...)
+	eng, err := engine.New(journalPath, instruments...)
+	if err != nil {
+		return err
+	}
 	engineCtx, stopEngine := context.WithCancel(context.Background())
 	engineDone := make(chan struct{})
 	go func() {
