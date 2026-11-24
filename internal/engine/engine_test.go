@@ -3,7 +3,6 @@ package engine_test
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -24,7 +23,7 @@ func order(c, i int) market.Order {
 
 // start runs an engine for ACME until the test ends, with its journal in a folder of the test's own.
 func start(t testing.TB) *engine.Engine {
-	e, err := engine.New(filepath.Join(t.TempDir(), "engine.journal"), acme)
+	e, err := engine.New(t.TempDir(), acme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +67,7 @@ func TestManyClients(t *testing.T) {
 
 // TestStopped sends an order to an engine that has already stopped.
 func TestStopped(t *testing.T) {
-	e, err := engine.New(filepath.Join(t.TempDir(), "engine.journal"), acme)
+	e, err := engine.New(t.TempDir(), acme)
 	if err != nil {
 		t.Fatal(err)
 	}

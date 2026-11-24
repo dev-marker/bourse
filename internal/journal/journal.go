@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -140,4 +141,50 @@ func (r *Reader) damaged(err error) error {
 // Offset is where the next record starts. After an error, it's the end of the last good record.
 func (r *Reader) Offset() int64 {
 	return r.off
+}
+
+// Open opens the journal at path to append to it, or creates it if there isn't one yet. First, it hands
+// every entry already in it to replay, in order, and returns how many bytes of a torn tail it cut off.
+func Open(path string, replay func(Entry) error) (*Writer, int64, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		w, err := Create(path)
+		return w, 0, err
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	cut, err := recoverFile(f, replay)
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return &Writer{f: f}, cut, nil
+}
+
+// recoverFile hands every entry in f to replay. It returns how many bytes of a torn tail it cut off.
+func recoverFile(f *os.File, replay func(Entry) error) (int64, error) {
+	r := NewReader(f)
+	for {
+		e, err := r.Next()
+		switch {
+		case err == io.EOF:
+			return 0, nil
+		case errors.Is(err, ErrTorn):
+			// Nobody heard back about a torn record, so we cut it off, and the next record starts clean.
+			info, err := f.Stat()
+			if err != nil {
+				return 0, err
+			}
+			if err := f.Truncate(r.Offset()); err != nil {
+				return 0, err
+			}
+			return info.Size() - r.Offset(), f.Sync()
+		case err != nil:
+			return 0, err
+		}
+		if err := replay(e); err != nil {
+			return 0, err
+		}
+	}
 }

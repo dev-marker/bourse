@@ -1,6 +1,7 @@
 package journal_test
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -102,5 +103,60 @@ func TestDamage(t *testing.T) {
 				t.Fatalf("read %d entries and then %v, want %d and %v", len(got), err, tt.good, tt.want)
 			}
 		})
+	}
+}
+
+// TestOpen is a restart after a crash in the middle of a write. The last record is cut short, Open
+// replays the two good entries, and the third is written again. Then all three must read back.
+func TestOpen(t *testing.T) {
+	path := write(t, entries)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b[:len(b)-3], 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var replayed []journal.Entry
+	w, cut, err := journal.Open(path, func(e journal.Entry) error {
+		replayed = append(replayed, e)
+		return nil
+	})
+	if err != nil || len(replayed) != 2 {
+		t.Fatalf("replayed %d entries and then %v, want 2 and no error", len(replayed), err)
+	}
+	if err := w.Append(&entries[2]); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	got, err := read(t, path)
+	if err != io.EOF || len(got) != 3 {
+		t.Fatalf("read %d entries and then %v, want 3 and EOF", len(got), err)
+	}
+	if cut != 35 {
+		t.Fatalf("cut %d bytes, want the 35 that were left of the last record", cut)
+	}
+}
+
+// TestOpenDamaged expects Open to refuse a damaged journal, and to leave every byte of it alone.
+func TestOpenDamaged(t *testing.T) {
+	path := write(t, entries)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b[102] ^= 1
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = journal.Open(path, func(journal.Entry) error { return nil })
+	if !errors.Is(err, journal.ErrCorrupt) {
+		t.Fatalf("Open said %v, want ErrCorrupt", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(after, b) {
+		t.Fatal("Open changed a damaged journal")
 	}
 }

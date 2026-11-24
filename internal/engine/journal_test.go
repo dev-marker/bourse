@@ -13,8 +13,8 @@ import (
 
 // TestJournal checks that the journal holds every input that reached a book, in order, and nothing else.
 func TestJournal(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "engine.journal")
-	e, err := engine.New(path, acme)
+	dir := t.TempDir()
+	e, err := engine.New(dir, acme)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Join(dir, "engine.journal"))
 	if err != nil {
 		t.Fatal(err)
 	}

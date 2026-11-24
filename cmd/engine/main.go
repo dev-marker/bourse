@@ -22,8 +22,8 @@ import (
 	"github.com/fiston-user/bourse/internal/market"
 )
 
-// journalPath is where the engine writes down every input, before any book sees it.
-const journalPath = "var/engine.journal"
+// dataDir is where the engine keeps what it must never lose.
+const dataDir = "var"
 
 // instruments are what this engine trades.
 var instruments = []market.Instrument{
@@ -53,10 +53,21 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	eng, err := engine.New(journalPath, instruments...)
+	var ready atomic.Bool
+	hs := &http.Server{Handler: health(&ready), ReadHeaderTimeout: 5 * time.Second}
+	errs := make(chan error, 2)
+	go func() { errs <- hs.Serve(hl) }()
+
+	eng, err := engine.New(dataDir, instruments...)
 	if err != nil {
 		return err
 	}
+	rec := eng.Recovery()
+	if rec.Cut > 0 {
+		log.Warn("cut a torn tail off the journal", "bytes", rec.Cut)
+	}
+	log.Info("recovered", "snapshot", rec.Snapshot, "replayed", rec.Replayed,
+		"took", rec.Took.Round(time.Millisecond))
 	engineCtx, stopEngine := context.WithCancel(context.Background())
 	engineDone := make(chan struct{})
 	go func() {
@@ -68,12 +79,7 @@ func run(log *slog.Logger) error {
 	boursev1.RegisterEngineServiceServer(gs, &server{engine: eng})
 	reflection.Register(gs)
 
-	var ready atomic.Bool
-	hs := &http.Server{Handler: health(&ready), ReadHeaderTimeout: 5 * time.Second}
-
-	errs := make(chan error, 2)
 	go func() { errs <- gs.Serve(gl) }()
-	go func() { errs <- hs.Serve(hl) }()
 	ready.Store(true)
 	log.Info("engine ready", "grpc", ":9083", "http", ":8083", "symbols", len(instruments))
 
@@ -101,7 +107,7 @@ func health(ready *atomic.Bool) http.Handler {
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if !ready.Load() {
-			http.Error(w, "shutting down", http.StatusServiceUnavailable)
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		fmt.Fprintln(w, "ready")

@@ -20,6 +20,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
 )
@@ -129,7 +130,17 @@ func flood(ctx context.Context, clients, orders int) error {
 	wg.Wait()
 	took := time.Since(start)
 	if err := errors.Join(errs...); err != nil {
-		return err
+		// The engine went away in the middle. Say how far each symbol got, in the answers we did get.
+		for _, sym := range symbols {
+			var last uint64
+			for i := range clients {
+				if s := seqs[i][sym]; len(s) > 0 {
+					last = max(last, s[len(s)-1])
+				}
+			}
+			fmt.Printf("%s  the last answer was seq %d\n", sym, last)
+		}
+		return fmt.Errorf("the engine went away: %v", status.Code(err))
 	}
 	n := clients * orders
 	fmt.Printf("%d orders, %d at a time, in %v: %.0f orders a second\n", n, clients,

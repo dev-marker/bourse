@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -54,6 +55,8 @@ type command struct {
 	cancel uint64 // the order to cancel, or zero for a new order
 	reply  chan answer
 	to     *symbol // the book it's for
+	// state asks for the book's state instead, for a snapshot.
+	state chan<- bookState
 }
 
 // answer is what a command gets back: its report, or why it never reached the book.
@@ -75,30 +78,82 @@ const queue = 1024
 
 // Engine trades many symbols, each in a goroutine of its own.
 type Engine struct {
+	dir     string // where it keeps its journal and snapshots
 	symbols map[string]*symbol
 	stopped chan struct{} // closed when Run returns
 	inbox   chan command  // every command, on its way to the journal
 	journal *journal.Writer
 	input   uint64 // the last input written to the journal
 	err     error  // why the journal failed, if it did: then nothing more gets through
+	every   uint64 // inputs between two snapshots
+	snapped uint64 // the last input the snapshot covers
+	// startup is how New got the engine back to where it was.
+	startup Recovery
 }
 
-// New returns an engine for these instruments, with a new journal at path. Nothing trades until Run.
-func New(path string, instruments ...market.Instrument) (*Engine, error) {
-	j, err := journal.Create(path)
-	if err != nil {
-		return nil, err
-	}
+// Recovery says how the engine got back to where it was, when New made it.
+type Recovery struct {
+	Snapshot uint64        // the last input the snapshot covered, or zero without one
+	Replayed int           // journal entries replayed
+	Cut      int64         // bytes of a torn tail cut off the journal
+	Took     time.Duration // how long it took
+}
+
+// journalFile is the journal's name, in the engine's folder.
+const journalFile = "engine.journal"
+
+const (
+	snapshotFile  = "engine.snapshot"
+	snapshotEvery = 100_000 // inputs between two snapshots
+)
+
+// New returns an engine for these instruments, with its journal in dir. If there's a journal there from
+// an earlier run, it rebuilds the books from it first, exactly as they were. Nothing trades until Run.
+func New(dir string, instruments ...market.Instrument) (*Engine, error) {
+	start := time.Now()
 	e := &Engine{
+		dir:     dir,
 		symbols: map[string]*symbol{},
 		stopped: make(chan struct{}),
 		inbox:   make(chan command, queue),
-		journal: j,
+		every:   snapshotEvery,
 	}
 	for _, in := range instruments {
 		e.symbols[in.Symbol] = &symbol{inbox: make(chan command, queue), book: book.New(in)}
 	}
+	if err := e.restore(); err != nil {
+		return nil, fmt.Errorf("loading the snapshot: %w", err)
+	}
+	j, cut, err := journal.Open(filepath.Join(dir, journalFile), e.replay)
+	if err != nil {
+		return nil, fmt.Errorf("recovering the journal: %w", err)
+	}
+	e.journal = j
+	e.startup.Cut, e.startup.Took = cut, time.Since(start)
 	return e, nil
+}
+
+// replay applies one entry from the journal to its book, through the same code as a live command.
+func (e *Engine) replay(entry journal.Entry) error {
+	if entry.Seq <= e.input {
+		return nil // the snapshot has it already
+	}
+	if entry.Seq != e.input+1 {
+		return fmt.Errorf("the journal jumps from input %d to %d", e.input, entry.Seq)
+	}
+	s, ok := e.symbols[entry.Symbol]
+	if !ok {
+		return fmt.Errorf("input %d is for %s, which this engine doesn't trade", entry.Seq, entry.Symbol)
+	}
+	e.input = entry.Seq
+	s.apply(entry.Cancel, entry.Order)
+	e.startup.Replayed++
+	return nil
+}
+
+// Recovery says how the engine got back to where it was, when New made it.
+func (e *Engine) Recovery() Recovery {
+	return e.startup
 }
 
 // Run starts the engine. It returns when ctx is done, and every command in the journal has reached its book.
@@ -121,6 +176,9 @@ func (e *Engine) Run(ctx context.Context) {
 func (e *Engine) record(ctx context.Context) {
 	var batch []command
 	for {
+		if e.err == nil && e.input-e.snapped >= e.every {
+			e.err = e.takeSnapshot()
+		}
 		select {
 		case c := <-e.inbox:
 			batch = append(batch[:0], c)
@@ -164,12 +222,20 @@ func (e *Engine) write(batch []command) error {
 // run is the symbol's goroutine, the only code that ever touches its book. All it gets is in the journal.
 func (s *symbol) run() {
 	for c := range s.inbox {
-		if c.cancel != 0 {
-			c.reply <- answer{Report: s.cancel(c.cancel)}
-		} else {
-			c.reply <- answer{Report: s.submit(c.order)}
+		if c.state != nil {
+			c.state <- s.state()
+			continue
 		}
+		c.reply <- answer{Report: s.apply(c.cancel, c.order)}
 	}
+}
+
+// apply does one input to the book. Live or replayed, every input goes through here, and nowhere else.
+func (s *symbol) apply(cancel uint64, o market.Order) Report {
+	if cancel != 0 {
+		return s.cancel(cancel)
+	}
+	return s.submit(o)
 }
 
 // submit gives o the next order ID, matches it, and numbers everything that happened.

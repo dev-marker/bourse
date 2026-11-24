@@ -161,3 +161,17 @@ func (b *Book) Depth(s market.Side, n int) []Level {
 func (b *Book) Len() int {
 	return len(b.orders)
 }
+
+// Orders returns every resting order: the bids, then the asks, each level oldest first. Adding them to an
+// empty book, in this order, makes the same book again.
+func (b *Book) Orders() []market.Order {
+	out := make([]market.Order, 0, len(b.orders))
+	for _, s := range []*side{&b.bids, &b.asks} {
+		for _, l := range s.levels {
+			for n := l.head; n != nil; n = n.next {
+				out = append(out, n.order)
+			}
+		}
+	}
+	return out
+}
