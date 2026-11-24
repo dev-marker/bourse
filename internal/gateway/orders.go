@@ -15,6 +15,7 @@ import (
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
 	"github.com/fiston-user/bourse/internal/market"
+	"github.com/fiston-user/bourse/internal/money"
 )
 
 // orderRequest is the body of POST /v1/orders.
@@ -75,7 +76,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		s.again(w, r, p, o)
 		return
 	}
-	code, body := s.submit(o)
+	code, body := s.place(o)
 	s.replies.finish(p, code, body, code == http.StatusCreated)
 	write(w, code, body)
 }
@@ -117,22 +118,85 @@ func (s *Server) order(account string, req orderRequest) (market.Order, error) {
 	return o, o.Validate(in)
 }
 
-// submit sends o to the engine, and returns the status and the body to answer with.
-func (s *Server) submit(o market.Order) (int, []byte) {
+// place holds what o may spend, sends it to the engine, and settles what happened.
+func (s *Server) place(o market.Order) (int, []byte) {
 	// Not the request's context. If the client hangs up, the order still goes in, and we see what happened.
 	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout)
 	defer cancel()
+	if err := s.money.Hold(ctx, o); err != nil {
+		return s.holdError(err)
+	}
+	res, err := s.submit(ctx, o)
+	if err != nil {
+		switch status.Code(err) {
+		case codes.InvalidArgument, codes.NotFound: // a definite no, so nothing reached a book
+			s.settle(o, 0, nil)
+		default: // we don't know if it's in the book, so the hold stays
+			s.log.Warn("the engine's answer is unknown, the hold stays", "account", o.Account,
+				"client_order_id", o.ClientID)
+		}
+		return s.engineError(err)
+	}
+	s.settle(o, res.GetOrderId(), res.GetEvents())
+	return encode(http.StatusCreated, orderResponse{res.GetOrderId(), o.ClientID, events(res.GetEvents())})
+}
+
+// submit sends o to the engine.
+func (s *Server) submit(ctx context.Context, o market.Order) (*boursev1.SubmitOrderResponse, error) {
 	req := &boursev1.SubmitOrderRequest{Symbol: o.Symbol, Account: o.Account, ClientId: o.ClientID,
 		Side: boursev1.Side(o.Side), Type: boursev1.OrderType(o.Type),
 		TimeInForce: boursev1.TimeInForce(o.TIF), Qty: int64(o.Qty), PostOnly: o.PostOnly}
 	if o.Type == market.Limit {
 		req.Price = s.instruments[o.Symbol].FormatPrice(o.Price)
 	}
-	res, err := s.engine.SubmitOrder(ctx, req)
-	if err != nil {
-		return s.engineError(err)
+	return s.engine.SubmitOrder(ctx, req)
+}
+
+// holdError turns a failed hold into a status and a body.
+func (s *Server) holdError(err error) (int, []byte) {
+	switch {
+	case errors.Is(err, money.ErrInsufficient):
+		return encode(http.StatusUnprocessableEntity, problem{err.Error()})
+	case errors.Is(err, money.ErrNoPrice), errors.Is(err, money.ErrTooBig):
+		return encode(http.StatusBadRequest, problem{err.Error()})
+	case errors.Is(err, money.ErrHeld):
+		return encode(http.StatusConflict, problem{err.Error()})
+	default:
+		s.log.Error("placing a hold", "err", err)
+		return encode(http.StatusInternalServerError, problem{"something went wrong on our side"})
 	}
-	return encode(http.StatusCreated, orderResponse{res.GetOrderId(), o.ClientID, events(res.GetEvents())})
+}
+
+// settle moves the money for what the engine did with o. Every trade pays out of both holds, and
+// what doesn't rest in the book is released. That includes our own resting orders that the engine
+// cancelled, to stop o trading with them.
+func (s *Server) settle(o market.Order, id uint64, evs []*boursev1.Event) {
+	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout)
+	defer cancel()
+	var trades []money.Trade
+	var removed []uint64
+	rests := false
+	for _, ev := range evs {
+		switch ev.GetKind() {
+		case boursev1.EventKind_EVENT_KIND_TRADED:
+			p, _ := s.instruments[o.Symbol].ParsePrice(ev.GetPrice())
+			qty := market.Qty(ev.GetQty())
+			trades = append(trades, money.Trade{Maker: ev.GetMakerId(), Price: p, Qty: qty})
+		case boursev1.EventKind_EVENT_KIND_RESTED:
+			rests = true
+		case boursev1.EventKind_EVENT_KIND_CANCELLED:
+			if ev.GetOrderId() != id {
+				removed = append(removed, ev.GetOrderId())
+			}
+		}
+	}
+	err := s.money.Settle(ctx, o, id, trades, rests)
+	for _, r := range removed {
+		err = errors.Join(err, s.money.Release(ctx, o.Symbol, r))
+	}
+	if err != nil {
+		s.log.Error("settling an order: its holds stay until reconciliation", "order", id, "err", err)
+	}
 }
 
 // engineError turns an engine's error into a status and a body: the engine's own words for a bad
@@ -171,9 +235,9 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "the order ID must be a number")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), engineTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout) // so the hold always comes back
 	defer cancel()
-	req := &boursev1.CancelOrderRequest{Symbol: r.PathValue("symbol"), OrderId: id}
+	req := &boursev1.CancelOrderRequest{Symbol: r.PathValue("symbol"), OrderId: id, Account: account(r)}
 	res, err := s.engine.CancelOrder(ctx, req)
 	if err != nil {
 		status, body := s.engineError(err)
@@ -184,6 +248,9 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 	if len(evs) == 1 && evs[0].Kind == "rejected" {
 		fail(w, http.StatusNotFound, evs[0].Reason)
 		return
+	}
+	if err := s.money.Release(ctx, r.PathValue("symbol"), id); err != nil {
+		s.log.Error("releasing a cancelled order's hold", "order", id, "err", err)
 	}
 	reply(w, http.StatusOK, orderResponse{OrderID: id, Events: evs})
 }
@@ -198,6 +265,26 @@ func (s *Server) listInstruments(w http.ResponseWriter, r *http.Request) {
 	out := make([]instrument, len(s.list))
 	for i, in := range s.list {
 		out[i] = instrument{in.Symbol, in.FormatPrice(in.TickSize), int64(in.LotSize)}
+	}
+	reply(w, http.StatusOK, out)
+}
+
+// listBalances shows what the account that signed the request owns, and how much of it is held.
+func (s *Server) listBalances(w http.ResponseWriter, r *http.Request) {
+	all, err := s.money.Balances(r.Context(), account(r))
+	if err != nil {
+		s.log.Error("reading balances", "err", err)
+		fail(w, http.StatusInternalServerError, "something went wrong on our side")
+		return
+	}
+	type balance struct {
+		Asset     string `json:"asset"`
+		Available string `json:"available"`
+		Held      string `json:"held"`
+	}
+	out := make([]balance, len(all))
+	for i, b := range all {
+		out[i] = balance{b.Asset, money.Format(b.Asset, b.Available), money.Format(b.Asset, b.Held)}
 	}
 	reply(w, http.StatusOK, out)
 }

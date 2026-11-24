@@ -21,6 +21,7 @@ import (
 	"github.com/fiston-user/bourse/internal/gateway"
 	"github.com/fiston-user/bourse/internal/market"
 	"github.com/fiston-user/bourse/internal/migrate"
+	"github.com/fiston-user/bourse/internal/money"
 	"github.com/fiston-user/bourse/internal/ratelimit"
 )
 
@@ -44,13 +45,28 @@ func run(log *slog.Logger) error {
 	if err := migrate.Up(ctx, db, auth.Migrations); err != nil {
 		return err
 	}
-	keys := auth.NewStore(db)
+	if err := migrate.Up(ctx, db, money.Migrations); err != nil {
+		return err
+	}
+	keys, balances := auth.NewStore(db), money.NewStore(db)
 	if len(os.Args) == 3 && os.Args[1] == "key" { // gateway key ACCOUNT: a new API key, printed once
 		k, err := keys.Create(ctx, os.Args[2])
 		if err != nil {
 			return err
 		}
 		fmt.Printf("BOURSE_KEY=%s\nBOURSE_SECRET=%s\n", k.ID, k.Secret)
+		return nil
+	}
+	if len(os.Args) == 5 && os.Args[1] == "fund" { // gateway fund ACCOUNT ASSET AMOUNT: a demo deposit
+		account, asset := os.Args[2], os.Args[3]
+		amount, err := money.Parse(asset, os.Args[4])
+		if err != nil {
+			return err
+		}
+		if err := balances.Fund(ctx, account, asset, amount); err != nil {
+			return err
+		}
+		fmt.Printf("%s +%s %s\n", account, money.Format(asset, amount), asset)
 		return nil
 	}
 
@@ -66,7 +82,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	srv := gateway.New(engine, keys, ratelimit.New(10, 20), instruments, log)
+	srv := gateway.New(engine, keys, balances, ratelimit.New(10, 20), instruments, log)
 	hs := &http.Server{Addr: ":8080", Handler: srv, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
 	errs := make(chan error, 1)

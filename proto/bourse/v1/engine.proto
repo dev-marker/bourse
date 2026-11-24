@@ -32,6 +32,7 @@ message SubmitOrderResponse {
 message CancelOrderRequest {
   string symbol = 1;
   uint64 order_id = 2;
+  string account = 3; // only the account that placed an order may cancel it
 }
 
 message CancelOrderResponse {

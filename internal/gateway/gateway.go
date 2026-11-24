@@ -12,6 +12,7 @@ import (
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
 	"github.com/fiston-user/bourse/internal/auth"
 	"github.com/fiston-user/bourse/internal/market"
+	"github.com/fiston-user/bourse/internal/money"
 	"github.com/fiston-user/bourse/internal/ratelimit"
 )
 
@@ -20,10 +21,19 @@ type Keys interface {
 	Lookup(ctx context.Context, id string) (auth.Key, error)
 }
 
+// Money holds what orders may spend, and moves it when they trade.
+type Money interface {
+	Hold(ctx context.Context, o market.Order) error
+	Settle(ctx context.Context, o market.Order, id uint64, trades []money.Trade, rests bool) error
+	Release(ctx context.Context, symbol string, id uint64) error
+	Balances(ctx context.Context, account string) ([]money.Balance, error)
+}
+
 // Server is the REST API. It's an http.Handler.
 type Server struct {
 	engine      boursev1.EngineServiceClient
 	keys        Keys
+	money       Money
 	limits      *ratelimit.Limiter
 	replies     *replies
 	instruments map[string]market.Instrument
@@ -34,11 +44,12 @@ type Server struct {
 }
 
 // New returns the API for an engine that trades these instruments.
-func New(engine boursev1.EngineServiceClient, keys Keys, limits *ratelimit.Limiter,
+func New(engine boursev1.EngineServiceClient, keys Keys, money Money, limits *ratelimit.Limiter,
 	instruments []market.Instrument, log *slog.Logger) *Server {
 	s := &Server{
 		engine:      engine,
 		keys:        keys,
+		money:       money,
 		limits:      limits,
 		replies:     newReplies(10 * time.Minute),
 		instruments: map[string]market.Instrument{},
@@ -53,6 +64,7 @@ func New(engine boursev1.EngineServiceClient, keys Keys, limits *ratelimit.Limit
 	s.mux.HandleFunc("GET /v1/instruments", s.listInstruments)
 	s.mux.Handle("POST /v1/orders", s.private(s.placeOrder))
 	s.mux.Handle("DELETE /v1/orders/{symbol}/{id}", s.private(s.cancelOrder))
+	s.mux.Handle("GET /v1/balances", s.private(s.listBalances))
 	return s
 }
 

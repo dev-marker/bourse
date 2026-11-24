@@ -9,6 +9,7 @@ import (
 
 	"github.com/fiston-user/bourse/internal/engine"
 	"github.com/fiston-user/bourse/internal/journal"
+	"github.com/fiston-user/bourse/internal/market"
 )
 
 // TestJournal checks that the journal holds every input that reached a book, in order, and nothing else.
@@ -28,7 +29,7 @@ func TestJournal(t *testing.T) {
 	if _, err := e.Submit(t.Context(), bad); err == nil {
 		t.Fatal("an order for -5 shares was accepted")
 	}
-	if _, err := e.Cancel(t.Context(), "ACME", r.OrderID); err != nil {
+	if _, err := e.Cancel(t.Context(), "ACME", r.OrderID, buy.Account); err != nil {
 		t.Fatal(err)
 	}
 
@@ -52,7 +53,7 @@ func TestJournal(t *testing.T) {
 	}
 	want := []journal.Entry{
 		{Seq: 1, Symbol: "ACME", Order: buy},
-		{Seq: 2, Symbol: "ACME", Cancel: r.OrderID},
+		{Seq: 2, Symbol: "ACME", Cancel: r.OrderID, Order: market.Order{Account: buy.Account}},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("the journal holds\n%+v\nwant\n%+v", got, want)

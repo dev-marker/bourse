@@ -235,7 +235,7 @@ func (s *symbol) run() {
 // apply does one input to the book. Live or replayed, every input goes through here, and nowhere else.
 func (s *symbol) apply(cancel uint64, o market.Order) Report {
 	if cancel != 0 {
-		return s.cancel(cancel)
+		return s.cancel(cancel, o.Account)
 	}
 	return s.submit(o)
 }
@@ -266,13 +266,14 @@ func (s *symbol) submit(o market.Order) Report {
 	return r
 }
 
-// cancel takes an order out of the book, if it's still there.
-func (s *symbol) cancel(id uint64) Report {
+// cancel takes an order out of the book, if it's still there, and if it's this account's.
+func (s *symbol) cancel(id uint64, account string) Report {
 	r := Report{OrderID: id}
-	if !s.book.Cancel(id) {
+	if o, ok := s.book.Order(id); !ok || o.Account != account {
 		s.emit(&r, Event{Kind: Rejected, Order: id, Err: ErrNotFound})
 		return r
 	}
+	s.book.Cancel(id)
 	s.emit(&r, Event{Kind: Cancelled, Order: id})
 	return r
 }
@@ -296,13 +297,13 @@ func (e *Engine) Submit(ctx context.Context, o market.Order) (Report, error) {
 	return e.send(ctx, s, command{order: o})
 }
 
-// Cancel takes a resting order out of its symbol's book.
-func (e *Engine) Cancel(ctx context.Context, sym string, id uint64) (Report, error) {
+// Cancel takes a resting order out of its symbol's book, if the account placed it.
+func (e *Engine) Cancel(ctx context.Context, sym string, id uint64, account string) (Report, error) {
 	s, ok := e.symbols[sym]
 	if !ok {
 		return Report{}, ErrUnknownSymbol
 	}
-	return e.send(ctx, s, command{cancel: id})
+	return e.send(ctx, s, command{cancel: id, order: market.Order{Account: account}})
 }
 
 // send puts c in the symbol's queue, and waits for the answer.

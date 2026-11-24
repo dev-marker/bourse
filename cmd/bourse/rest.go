@@ -1,12 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fiston-user/bourse/internal/auth"
@@ -23,52 +28,70 @@ func signer() (*auth.Transport, error) {
 	return t, nil
 }
 
-// proxy passes every request on :8079 to the gateway, signed. It's for trying the API by hand, with
+// proxy passes every request on addr to the gateway, signed. It's for trying the API by hand, with
 // tools that can't sign a request themselves.
-func proxy() error {
+func proxy(addr string) error {
 	t, err := signer()
 	if err != nil {
 		return err
 	}
 	target, _ := url.Parse(gatewayURL)
 	p := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(target) }, Transport: t}
-	fmt.Println("signing requests on :8079 with", t.Key)
-	s := &http.Server{Addr: ":8079", Handler: p, ReadHeaderTimeout: 5 * time.Second}
+	fmt.Println("signing requests on", addr, "with", t.Key)
+	s := &http.Server{Addr: addr, Handler: p, ReadHeaderTimeout: 5 * time.Second}
 	return s.ListenAndServe()
 }
 
-// burst sends n orders through the gateway as fast as it can, and counts the answers.
+// burst sends n orders through the gateway, all at once, and counts the answers. Then it shows what
+// the account has left.
 func burst(n int) error {
 	t, err := signer()
 	if err != nil {
 		return err
 	}
 	c := &http.Client{Transport: t, Timeout: 10 * time.Second}
-	var codes []int
-	count := map[int]int{}
-	var retry string
+	var (
+		mu    sync.Mutex
+		count = map[int]int{}
+		retry string
+		errs  []error
+		wg    sync.WaitGroup
+	)
 	run := time.Now().UnixNano()
 	for i := range n {
-		body := fmt.Sprintf(`{"client_order_id":"burst-%d-%d","symbol":"NOVA","side":"buy",`+
-			`"price":"90.00","qty":1}`, run, i)
-		res, err := c.Post(gatewayURL+"/v1/orders", "application/json", strings.NewReader(body))
-		if err != nil {
-			return err
-		}
-		res.Body.Close()
-		if count[res.StatusCode] == 0 {
-			codes = append(codes, res.StatusCode)
-		}
-		count[res.StatusCode]++
-		if v := res.Header.Get("Retry-After"); v != "" {
-			retry = v
-		}
+		wg.Go(func() {
+			body := fmt.Sprintf(`{"client_order_id":"burst-%d-%d","symbol":"NOVA","side":"buy",`+
+				`"price":"90.00","qty":1}`, run, i)
+			res, err := c.Post(gatewayURL+"/v1/orders", "application/json", strings.NewReader(body))
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				errs = append(errs, err)
+				return
+			}
+			res.Body.Close()
+			count[res.StatusCode]++
+			if v := res.Header.Get("Retry-After"); v != "" {
+				retry = v
+			}
+		})
 	}
-	for _, code := range codes {
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	for _, code := range slices.Sorted(maps.Keys(count)) {
 		fmt.Printf("%3d  %s\n", count[code], http.StatusText(code))
 	}
 	if retry != "" {
 		fmt.Printf("retry after %s s\n", retry)
 	}
-	return nil
+	res, err := c.Get(gatewayURL + "/v1/balances")
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	_, err = io.Copy(os.Stdout, res.Body)
+	fmt.Println()
+	return err
 }

@@ -1,6 +1,8 @@
 @gateway = http://localhost:8080
 # bin/bourse proxy signs each request with your key, and passes it on to the gateway.
 @signed = http://localhost:8079
+# A second proxy, bin/bourse proxy :8078, signs with bob's key.
+@bob = http://localhost:8078
 
 ### What the exchange trades
 GET {{gateway}}/v1/instruments
@@ -90,3 +92,41 @@ Content-Type: application/json
   "price": "95.00",
   "qty": 10
 }
+
+### What you have, and how much of it is held
+# @name balances
+GET {{signed}}/v1/balances
+
+### More than alice can pay for
+# @name toobig
+POST {{signed}}/v1/orders
+Content-Type: application/json
+
+{
+  "client_order_id": "a-6",
+  "symbol": "GLBX",
+  "side": "buy",
+  "price": "101.25",
+  "qty": 1000
+}
+
+### Bob sells 100 GLBX
+# @name bobsell
+POST {{bob}}/v1/orders
+Content-Type: application/json
+
+{
+  "client_order_id": "b-1",
+  "symbol": "GLBX",
+  "side": "sell",
+  "price": "101.00",
+  "qty": 100
+}
+
+### What bob has
+# @name bobbalances
+GET {{bob}}/v1/balances
+
+### Bob tries to cancel alice's buy
+# @name bobcancel
+DELETE {{bob}}/v1/orders/GLBX/{{buy.response.body.order_id}}

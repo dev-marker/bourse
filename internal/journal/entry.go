@@ -14,6 +14,7 @@ type Entry struct {
 	Symbol string       // the book it's for
 	Cancel uint64       // the order to cancel, or zero for a new order
 	Order  market.Order // the new order, without an ID: the engine hands those out again on replay
+	// For a cancel, Order only has the account that asked.
 }
 
 // The first byte after the time says what kind of entry follows.
@@ -29,7 +30,8 @@ func (e *Entry) AppendBinary(b []byte) ([]byte, error) {
 	if e.Cancel != 0 {
 		b = append(b, kindCancel)
 		b = appendString(b, e.Symbol)
-		return binary.LittleEndian.AppendUint64(b, e.Cancel), nil
+		b = binary.LittleEndian.AppendUint64(b, e.Cancel)
+		return appendString(b, e.Order.Account), nil
 	}
 	o := &e.Order
 	var postOnly byte
@@ -66,6 +68,7 @@ func (e *Entry) UnmarshalBinary(b []byte) error {
 		if e.Cancel == 0 {
 			d.bad = true
 		}
+		e.Order.Account = d.str()
 	case kindOrder:
 		o := &e.Order
 		o.Symbol = e.Symbol // an order's symbol is the entry's, so it's only written once

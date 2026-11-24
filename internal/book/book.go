@@ -119,6 +119,15 @@ func (b *Book) Cancel(id uint64) bool {
 	return true
 }
 
+// Order returns a resting order, as it is now, and false if it isn't in the book.
+func (b *Book) Order(id uint64) (market.Order, bool) {
+	n, ok := b.orders[id]
+	if !ok {
+		return market.Order{}, false
+	}
+	return n.order, true
+}
+
 // remove takes a resting order out of its queue, its level and the index.
 func (b *Book) remove(n *node) {
 	l := n.level

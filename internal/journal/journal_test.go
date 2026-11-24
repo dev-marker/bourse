@@ -12,14 +12,15 @@ import (
 	"github.com/fiston-user/bourse/internal/market"
 )
 
-// entries are one of each kind: a limit buy, a market sell and a cancel. They take 60, 55 and 38 bytes.
+// entries are one of each kind: a limit buy, a market sell and a cancel. They take 60, 55 and 44 bytes.
 var entries = []journal.Entry{
 	{Seq: 1, Time: 1_764_000_000_000_000_001, Symbol: "ACME", Order: market.Order{Symbol: "ACME",
 		Account: "alice", ClientID: "a-1", Side: market.Buy, Type: market.Limit, TIF: market.GTC,
 		Price: 10_127, Qty: 300, PostOnly: true}},
 	{Seq: 2, Time: 1_764_000_000_000_000_002, Symbol: "ACME", Order: market.Order{Symbol: "ACME",
 		Account: "bob", Side: market.Sell, Type: market.Market, TIF: market.IOC, Qty: 100}},
-	{Seq: 3, Time: 1_764_000_000_000_000_003, Symbol: "ACME", Cancel: 1},
+	{Seq: 3, Time: 1_764_000_000_000_000_003, Symbol: "ACME", Cancel: 1,
+		Order: market.Order{Account: "alice"}},
 }
 
 // write makes a journal with these entries, and returns its path.
@@ -136,8 +137,8 @@ func TestOpen(t *testing.T) {
 	if err != io.EOF || len(got) != 3 {
 		t.Fatalf("read %d entries and then %v, want 3 and EOF", len(got), err)
 	}
-	if cut != 35 {
-		t.Fatalf("cut %d bytes, want the 35 that were left of the last record", cut)
+	if cut != 41 {
+		t.Fatalf("cut %d bytes, want the 41 that were left of the last record", cut)
 	}
 }
 

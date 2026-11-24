@@ -393,6 +393,7 @@ type CancelOrderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Symbol        string                 `protobuf:"bytes,1,opt,name=symbol,proto3" json:"symbol,omitempty"`
 	OrderId       uint64                 `protobuf:"varint,2,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	Account       string                 `protobuf:"bytes,3,opt,name=account,proto3" json:"account,omitempty"` // only the account that placed an order may cancel it
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -439,6 +440,13 @@ func (x *CancelOrderRequest) GetOrderId() uint64 {
 		return x.OrderId
 	}
 	return 0
+}
+
+func (x *CancelOrderRequest) GetAccount() string {
+	if x != nil {
+		return x.Account
+	}
+	return ""
 }
 
 type CancelOrderResponse struct {
@@ -743,10 +751,11 @@ const file_bourse_v1_engine_proto_rawDesc = "" +
 	"\tclient_id\x18\t \x01(\tR\bclientId\"Z\n" +
 	"\x13SubmitOrderResponse\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x04R\aorderId\x12(\n" +
-	"\x06events\x18\x02 \x03(\v2\x10.bourse.v1.EventR\x06events\"G\n" +
+	"\x06events\x18\x02 \x03(\v2\x10.bourse.v1.EventR\x06events\"a\n" +
 	"\x12CancelOrderRequest\x12\x16\n" +
 	"\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x19\n" +
-	"\border_id\x18\x02 \x01(\x04R\aorderId\"?\n" +
+	"\border_id\x18\x02 \x01(\x04R\aorderId\x12\x18\n" +
+	"\aaccount\x18\x03 \x01(\tR\aaccount\"?\n" +
 	"\x13CancelOrderResponse\x12(\n" +
 	"\x06events\x18\x01 \x03(\v2\x10.bourse.v1.EventR\x06events\"\x18\n" +
 	"\x16ListInstrumentsRequest\"R\n" +

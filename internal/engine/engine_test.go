@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -99,4 +100,22 @@ func BenchmarkSubmit(b *testing.B) {
 		}
 	})
 	b.ReportMetric(float64(waited.Load())/float64(b.N)/1e6, "ms/order")
+}
+
+// TestCancelOwner places an order for client0. Another account's cancel hears it doesn't exist, and only
+// then does client0's own cancel take it out.
+func TestCancelOwner(t *testing.T) {
+	e := start(t)
+	r, err := e.Submit(t.Context(), order(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, _ := e.Cancel(t.Context(), "ACME", r.OrderID, "client1")
+	if ev := theirs.Events[0]; ev.Kind != engine.Rejected || !errors.Is(ev.Err, engine.ErrNotFound) {
+		t.Fatalf("a cancel from another account: %+v, want rejected, not found", ev)
+	}
+	mine, _ := e.Cancel(t.Context(), "ACME", r.OrderID, "client0")
+	if ev := mine.Events[0]; ev.Kind != engine.Cancelled {
+		t.Fatalf("the owner's cancel: %+v, want cancelled", ev)
+	}
 }

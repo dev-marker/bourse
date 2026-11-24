@@ -140,7 +140,7 @@ func trade(t *testing.T, e *Engine) map[string][]Event {
 // close to 100.00. Some of the orders are invalid on purpose.
 func send(ctx context.Context, e *Engine, r *rand.Rand, client int, in market.Instrument) (Report, error) {
 	if r.IntN(5) == 0 {
-		return e.Cancel(ctx, in.Symbol, uint64(1+r.IntN(400)))
+		return e.Cancel(ctx, in.Symbol, uint64(1+r.IntN(400)), fmt.Sprint("client", client%4))
 	}
 	return e.Submit(ctx, market.Order{
 		Symbol: in.Symbol, Account: fmt.Sprint("client", client%4), Side: market.Side(1 + r.IntN(2)),

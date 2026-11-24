@@ -1,11 +1,13 @@
-// Command bourse sends orders to the engine over gRPC.
+// Command bourse is a trader's toolbox: orders straight to the engine over gRPC, and signed requests
+// through the gateway.
 //
 //	bourse buy ACME 300 101.27     a limit order, good till cancelled
 //	bourse sell ACME 500 market    a market order
-//	bourse cancel ACME 3
+//	bourse cancel ACME 3 buy       cancel buy order 3 (the CLI's buys and sells are two accounts)
 //	bourse flood 8 5000            8 clients at once, 5,000 orders each
 //	bourse proxy                   sign every request on :8079, and pass it on to the gateway
-//	bourse burst 30                30 orders through the gateway, as fast as it takes them
+//	bourse proxy :8078             the same, on another port, for a second key
+//	bourse burst 20                20 orders through the gateway at once, and what's left after them
 package main
 
 import (
@@ -35,8 +37,12 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 1 && args[0] == "proxy" {
-		return proxy()
+	if len(args) > 0 && args[0] == "proxy" {
+		addr := ":8079"
+		if len(args) == 2 {
+			addr = args[1] // a second proxy, for a second account
+		}
+		return proxy(addr)
 	}
 	if len(args) == 2 && args[0] == "burst" {
 		n, _ := strconv.Atoi(args[1])
@@ -71,8 +77,12 @@ func run(args []string) error {
 		}
 		evs = res.GetEvents()
 	case "cancel":
+		if len(args) < 4 {
+			return errors.New("usage: bourse cancel SYMBOL ID buy|sell")
+		}
 		id, _ := strconv.ParseUint(args[2], 10, 64)
-		res, err := c.CancelOrder(ctx, &boursev1.CancelOrderRequest{Symbol: args[1], OrderId: id})
+		res, err := c.CancelOrder(ctx, &boursev1.CancelOrderRequest{Symbol: args[1], OrderId: id,
+			Account: "cli-" + args[3]})
 		if err != nil {
 			return err
 		}

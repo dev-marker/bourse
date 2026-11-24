@@ -53,7 +53,7 @@ func (s *server) CancelOrder(ctx context.Context, req *boursev1.CancelOrderReque
 	if !ok {
 		return nil, status.Error(codes.NotFound, engine.ErrUnknownSymbol.Error())
 	}
-	r, err := s.engine.Cancel(ctx, req.GetSymbol(), req.GetOrderId())
+	r, err := s.engine.Cancel(ctx, req.GetSymbol(), req.GetOrderId(), req.GetAccount())
 	if err != nil {
 		return nil, toStatus(err)
 	}
