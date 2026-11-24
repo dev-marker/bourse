@@ -12,11 +12,16 @@ import (
 // ErrDuplicateID is returned when an order with the same ID is already resting.
 var ErrDuplicateID = errors.New("an order with this ID is already in the book")
 
+// room is how many orders a new book's index has space for, before it has to grow.
+const room = 1 << 16
+
 // side is one side of the book.
 type side struct {
 	levels  []*level // sorted from the worst price to the best, so the best is last
 	byPrice map[market.Price]*level
 	dir     int // +1 for bids, where higher is better; -1 for asks, where lower is better
+	// spare holds empty levels, ready to be used again.
+	spare []*level
 }
 
 // find returns where the level for p is, or where it would go.
@@ -32,7 +37,13 @@ func (s *side) levelAt(p market.Price) *level {
 	if l, ok := s.byPrice[p]; ok {
 		return l
 	}
-	l := &level{price: p}
+	var l *level
+	if n := len(s.spare); n > 0 {
+		l, s.spare = s.spare[n-1], s.spare[:n-1]
+		l.price = p
+	} else {
+		l = &level{price: p}
+	}
 	s.levels = slices.Insert(s.levels, s.find(p), l)
 	s.byPrice[p] = l
 	return l
@@ -43,6 +54,7 @@ func (s *side) drop(l *level) {
 	i := s.find(l.price)
 	s.levels = slices.Delete(s.levels, i, i+1)
 	delete(s.byPrice, l.price)
+	s.spare = append(s.spare, l)
 }
 
 // best is the level with the best price, or nil.
@@ -58,6 +70,10 @@ type Book struct {
 	Instrument market.Instrument
 	bids, asks side
 	orders     map[uint64]*node
+	// free holds nodes of orders that have left, ready to be used again.
+	free *node
+	// trades is reused by every Submit, for the trades in its Result.
+	trades []Trade
 }
 
 // New returns an empty book for in.
@@ -66,7 +82,7 @@ func New(in market.Instrument) *Book {
 		Instrument: in,
 		bids:       side{byPrice: map[market.Price]*level{}, dir: 1},
 		asks:       side{byPrice: map[market.Price]*level{}, dir: -1},
-		orders:     map[uint64]*node{},
+		orders:     make(map[uint64]*node, room),
 	}
 }
 
@@ -82,10 +98,15 @@ func (b *Book) Add(o market.Order) error {
 	if _, ok := b.orders[o.ID]; ok {
 		return ErrDuplicateID
 	}
-	n := &node{order: o}
+	b.rest(o)
+	return nil
+}
+
+// rest puts o at the back of the queue at its price. The caller has checked its ID.
+func (b *Book) rest(o market.Order) {
+	n := b.alloc(o)
 	b.sideOf(o.Side).levelAt(o.Price).push(n)
 	b.orders[o.ID] = n
-	return nil
 }
 
 // Cancel takes an order out of the book, and reports whether it was there.
@@ -94,13 +115,19 @@ func (b *Book) Cancel(id uint64) bool {
 	if !ok {
 		return false
 	}
+	b.remove(n)
+	return true
+}
+
+// remove takes a resting order out of its queue, its level and the index.
+func (b *Book) remove(n *node) {
 	l := n.level
 	l.remove(n)
 	if l.count == 0 {
 		b.sideOf(n.order.Side).drop(l)
 	}
-	delete(b.orders, id)
-	return true
+	delete(b.orders, n.order.ID)
+	b.release(n)
 }
 
 // Best returns the best price on a side and the quantity there, or false if that side is empty.

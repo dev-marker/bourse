@@ -27,6 +27,7 @@ type Result struct {
 }
 
 // Submit matches an incoming order against the book, and rests what's left if it may.
+// The trades in its Result are only valid until the next call, so copy them to keep them.
 func (b *Book) Submit(o market.Order) (Result, error) {
 	if _, ok := b.orders[o.ID]; ok {
 		return Result{}, ErrDuplicateID
@@ -39,7 +40,7 @@ func (b *Book) Submit(o market.Order) (Result, error) {
 		return Result{}, ErrCannotFill
 	}
 
-	var res Result
+	res := Result{Trades: b.trades[:0]}
 	left := o.Qty
 	for left > 0 {
 		l := opp.best()
@@ -49,7 +50,7 @@ func (b *Book) Submit(o market.Order) (Result, error) {
 		maker := l.head
 		if maker.order.Account == o.Account {
 			res.Removed = append(res.Removed, maker.order.ID)
-			b.Cancel(maker.order.ID)
+			b.remove(maker)
 			continue
 		}
 		qty := min(left, maker.order.Qty)
@@ -60,11 +61,12 @@ func (b *Book) Submit(o market.Order) (Result, error) {
 
 	if left > 0 && o.Type == market.Limit && o.TIF == market.GTC {
 		o.Qty = left
-		b.Add(o)
+		b.rest(o)
 		res.Rested = left
 	} else {
 		res.Cancelled = left
 	}
+	b.trades = res.Trades
 	return res, nil
 }
 
@@ -73,7 +75,7 @@ func (b *Book) fill(n *node, qty market.Qty) {
 	n.order.Qty -= qty
 	n.level.qty -= qty
 	if n.order.Qty == 0 {
-		b.Cancel(n.order.ID)
+		b.remove(n)
 	}
 }
 

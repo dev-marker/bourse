@@ -1,4 +1,4 @@
-.PHONY: up down test test-race bench fuzz
+.PHONY: up down test test-race bench fuzz flow profile
 
 up:
 	docker compose up -d --wait
@@ -17,3 +17,13 @@ bench:
 
 fuzz:
 	go test -fuzz=FuzzBook -fuzztime=20s ./internal/book/
+
+flow:
+	@mkdir -p tmp
+	go test -run '^$$' -bench Flow -benchmem -count 6 ./internal/book/ \
+		| tee tmp/flow.txt | tr '\t' ' '
+
+profile:
+	@mkdir -p tmp
+	go test -run '^$$' -bench Flow -o tmp/book.test \
+		-cpuprofile tmp/cpu.prof -memprofile tmp/mem.prof ./internal/book/
