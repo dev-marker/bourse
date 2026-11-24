@@ -32,6 +32,7 @@ func (s *server) SubmitOrder(ctx context.Context, req *boursev1.SubmitOrderReque
 		TIF:      narrow[market.TimeInForce](req.GetTimeInForce()),
 		Qty:      market.Qty(req.GetQty()),
 		PostOnly: req.GetPostOnly(),
+		ClientID: req.GetClientId(),
 	}
 	if p := req.GetPrice(); p != "" {
 		price, err := in.ParsePrice(p)
@@ -57,6 +58,17 @@ func (s *server) CancelOrder(ctx context.Context, req *boursev1.CancelOrderReque
 		return nil, toStatus(err)
 	}
 	return &boursev1.CancelOrderResponse{Events: events(in, r.Events)}, nil
+}
+
+// ListInstruments tells a client, like the gateway, what the engine trades.
+func (s *server) ListInstruments(ctx context.Context,
+	req *boursev1.ListInstrumentsRequest) (*boursev1.ListInstrumentsResponse, error) {
+	res := &boursev1.ListInstrumentsResponse{}
+	for _, in := range s.engine.Instruments() {
+		res.Instruments = append(res.Instruments, &boursev1.Instrument{Symbol: in.Symbol,
+			Decimals: int32(in.Decimals), TickSize: int64(in.TickSize), LotSize: int64(in.LotSize)})
+	}
+	return res, nil
 }
 
 // narrow turns a wire enum into ours. A value that doesn't fit becomes zero, and Validate rejects zero.

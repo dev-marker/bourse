@@ -4,6 +4,8 @@
 //	bourse sell ACME 500 market    a market order
 //	bourse cancel ACME 3
 //	bourse flood 8 5000            8 clients at once, 5,000 orders each
+//	bourse proxy                   sign every request on :8079, and pass it on to the gateway
+//	bourse burst 30                30 orders through the gateway, as fast as it takes them
 package main
 
 import (
@@ -33,6 +35,13 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == "proxy" {
+		return proxy()
+	}
+	if len(args) == 2 && args[0] == "burst" {
+		n, _ := strconv.Atoi(args[1])
+		return burst(n)
+	}
 	if len(args) < 3 {
 		return errors.New("usage: bourse buy|sell SYMBOL QTY PRICE|market, cancel SYMBOL ID, flood CLIENTS ORDERS")
 	}

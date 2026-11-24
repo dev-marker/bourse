@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	EngineService_SubmitOrder_FullMethodName = "/bourse.v1.EngineService/SubmitOrder"
-	EngineService_CancelOrder_FullMethodName = "/bourse.v1.EngineService/CancelOrder"
+	EngineService_SubmitOrder_FullMethodName     = "/bourse.v1.EngineService/SubmitOrder"
+	EngineService_CancelOrder_FullMethodName     = "/bourse.v1.EngineService/CancelOrder"
+	EngineService_ListInstruments_FullMethodName = "/bourse.v1.EngineService/ListInstruments"
 )
 
 // EngineServiceClient is the client API for EngineService service.
@@ -33,6 +34,8 @@ type EngineServiceClient interface {
 	SubmitOrder(ctx context.Context, in *SubmitOrderRequest, opts ...grpc.CallOption) (*SubmitOrderResponse, error)
 	// CancelOrder takes a resting order out of its book.
 	CancelOrder(ctx context.Context, in *CancelOrderRequest, opts ...grpc.CallOption) (*CancelOrderResponse, error)
+	// ListInstruments returns every instrument the engine trades, with its tick and lot sizes.
+	ListInstruments(ctx context.Context, in *ListInstrumentsRequest, opts ...grpc.CallOption) (*ListInstrumentsResponse, error)
 }
 
 type engineServiceClient struct {
@@ -63,6 +66,16 @@ func (c *engineServiceClient) CancelOrder(ctx context.Context, in *CancelOrderRe
 	return out, nil
 }
 
+func (c *engineServiceClient) ListInstruments(ctx context.Context, in *ListInstrumentsRequest, opts ...grpc.CallOption) (*ListInstrumentsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListInstrumentsResponse)
+	err := c.cc.Invoke(ctx, EngineService_ListInstruments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EngineServiceServer is the server API for EngineService service.
 // All implementations must embed UnimplementedEngineServiceServer
 // for forward compatibility.
@@ -73,6 +86,8 @@ type EngineServiceServer interface {
 	SubmitOrder(context.Context, *SubmitOrderRequest) (*SubmitOrderResponse, error)
 	// CancelOrder takes a resting order out of its book.
 	CancelOrder(context.Context, *CancelOrderRequest) (*CancelOrderResponse, error)
+	// ListInstruments returns every instrument the engine trades, with its tick and lot sizes.
+	ListInstruments(context.Context, *ListInstrumentsRequest) (*ListInstrumentsResponse, error)
 	mustEmbedUnimplementedEngineServiceServer()
 }
 
@@ -88,6 +103,9 @@ func (UnimplementedEngineServiceServer) SubmitOrder(context.Context, *SubmitOrde
 }
 func (UnimplementedEngineServiceServer) CancelOrder(context.Context, *CancelOrderRequest) (*CancelOrderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelOrder not implemented")
+}
+func (UnimplementedEngineServiceServer) ListInstruments(context.Context, *ListInstrumentsRequest) (*ListInstrumentsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListInstruments not implemented")
 }
 func (UnimplementedEngineServiceServer) mustEmbedUnimplementedEngineServiceServer() {}
 func (UnimplementedEngineServiceServer) testEmbeddedByValue()                       {}
@@ -146,6 +164,24 @@ func _EngineService_CancelOrder_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _EngineService_ListInstruments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListInstrumentsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EngineServiceServer).ListInstruments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EngineService_ListInstruments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EngineServiceServer).ListInstruments(ctx, req.(*ListInstrumentsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // EngineService_ServiceDesc is the grpc.ServiceDesc for EngineService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -160,6 +196,10 @@ var EngineService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelOrder",
 			Handler:    _EngineService_CancelOrder_Handler,
+		},
+		{
+			MethodName: "ListInstruments",
+			Handler:    _EngineService_ListInstruments_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

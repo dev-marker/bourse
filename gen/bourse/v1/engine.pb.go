@@ -239,6 +239,7 @@ type SubmitOrderRequest struct {
 	Price         string                 `protobuf:"bytes,6,opt,name=price,proto3" json:"price,omitempty"` // a decimal string like "101.25", empty for a market order
 	Qty           int64                  `protobuf:"varint,7,opt,name=qty,proto3" json:"qty,omitempty"`
 	PostOnly      bool                   `protobuf:"varint,8,opt,name=post_only,json=postOnly,proto3" json:"post_only,omitempty"`
+	ClientId      string                 `protobuf:"bytes,9,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"` // the client's own ID for the order
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -327,6 +328,13 @@ func (x *SubmitOrderRequest) GetPostOnly() bool {
 		return x.PostOnly
 	}
 	return false
+}
+
+func (x *SubmitOrderRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
 }
 
 type SubmitOrderResponse struct {
@@ -477,6 +485,154 @@ func (x *CancelOrderResponse) GetEvents() []*Event {
 	return nil
 }
 
+type ListInstrumentsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListInstrumentsRequest) Reset() {
+	*x = ListInstrumentsRequest{}
+	mi := &file_bourse_v1_engine_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListInstrumentsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListInstrumentsRequest) ProtoMessage() {}
+
+func (x *ListInstrumentsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bourse_v1_engine_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListInstrumentsRequest.ProtoReflect.Descriptor instead.
+func (*ListInstrumentsRequest) Descriptor() ([]byte, []int) {
+	return file_bourse_v1_engine_proto_rawDescGZIP(), []int{4}
+}
+
+type ListInstrumentsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Instruments   []*Instrument          `protobuf:"bytes,1,rep,name=instruments,proto3" json:"instruments,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListInstrumentsResponse) Reset() {
+	*x = ListInstrumentsResponse{}
+	mi := &file_bourse_v1_engine_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListInstrumentsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListInstrumentsResponse) ProtoMessage() {}
+
+func (x *ListInstrumentsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_bourse_v1_engine_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListInstrumentsResponse.ProtoReflect.Descriptor instead.
+func (*ListInstrumentsResponse) Descriptor() ([]byte, []int) {
+	return file_bourse_v1_engine_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListInstrumentsResponse) GetInstruments() []*Instrument {
+	if x != nil {
+		return x.Instruments
+	}
+	return nil
+}
+
+type Instrument struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Symbol        string                 `protobuf:"bytes,1,opt,name=symbol,proto3" json:"symbol,omitempty"`
+	Decimals      int32                  `protobuf:"varint,2,opt,name=decimals,proto3" json:"decimals,omitempty"`
+	TickSize      int64                  `protobuf:"varint,3,opt,name=tick_size,json=tickSize,proto3" json:"tick_size,omitempty"`
+	LotSize       int64                  `protobuf:"varint,4,opt,name=lot_size,json=lotSize,proto3" json:"lot_size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Instrument) Reset() {
+	*x = Instrument{}
+	mi := &file_bourse_v1_engine_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Instrument) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Instrument) ProtoMessage() {}
+
+func (x *Instrument) ProtoReflect() protoreflect.Message {
+	mi := &file_bourse_v1_engine_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Instrument.ProtoReflect.Descriptor instead.
+func (*Instrument) Descriptor() ([]byte, []int) {
+	return file_bourse_v1_engine_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Instrument) GetSymbol() string {
+	if x != nil {
+		return x.Symbol
+	}
+	return ""
+}
+
+func (x *Instrument) GetDecimals() int32 {
+	if x != nil {
+		return x.Decimals
+	}
+	return 0
+}
+
+func (x *Instrument) GetTickSize() int64 {
+	if x != nil {
+		return x.TickSize
+	}
+	return 0
+}
+
+func (x *Instrument) GetLotSize() int64 {
+	if x != nil {
+		return x.LotSize
+	}
+	return 0
+}
+
 // Event is one thing that happened to an order. seq counts the events of a symbol, with no gaps.
 type Event struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -493,7 +649,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_bourse_v1_engine_proto_msgTypes[4]
+	mi := &file_bourse_v1_engine_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -505,7 +661,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_bourse_v1_engine_proto_msgTypes[4]
+	mi := &file_bourse_v1_engine_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -518,7 +674,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_bourse_v1_engine_proto_rawDescGZIP(), []int{4}
+	return file_bourse_v1_engine_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Event) GetSeq() uint64 {
@@ -574,7 +730,7 @@ var File_bourse_v1_engine_proto protoreflect.FileDescriptor
 
 const file_bourse_v1_engine_proto_rawDesc = "" +
 	"\n" +
-	"\x16bourse/v1/engine.proto\x12\tbourse.v1\"\x96\x02\n" +
+	"\x16bourse/v1/engine.proto\x12\tbourse.v1\"\xb3\x02\n" +
 	"\x12SubmitOrderRequest\x12\x16\n" +
 	"\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x18\n" +
 	"\aaccount\x18\x02 \x01(\tR\aaccount\x12#\n" +
@@ -583,7 +739,8 @@ const file_bourse_v1_engine_proto_rawDesc = "" +
 	"\rtime_in_force\x18\x05 \x01(\x0e2\x16.bourse.v1.TimeInForceR\vtimeInForce\x12\x14\n" +
 	"\x05price\x18\x06 \x01(\tR\x05price\x12\x10\n" +
 	"\x03qty\x18\a \x01(\x03R\x03qty\x12\x1b\n" +
-	"\tpost_only\x18\b \x01(\bR\bpostOnly\"Z\n" +
+	"\tpost_only\x18\b \x01(\bR\bpostOnly\x12\x1b\n" +
+	"\tclient_id\x18\t \x01(\tR\bclientId\"Z\n" +
 	"\x13SubmitOrderResponse\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\x04R\aorderId\x12(\n" +
 	"\x06events\x18\x02 \x03(\v2\x10.bourse.v1.EventR\x06events\"G\n" +
@@ -591,7 +748,16 @@ const file_bourse_v1_engine_proto_rawDesc = "" +
 	"\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x19\n" +
 	"\border_id\x18\x02 \x01(\x04R\aorderId\"?\n" +
 	"\x13CancelOrderResponse\x12(\n" +
-	"\x06events\x18\x01 \x03(\v2\x10.bourse.v1.EventR\x06events\"\xb9\x01\n" +
+	"\x06events\x18\x01 \x03(\v2\x10.bourse.v1.EventR\x06events\"\x18\n" +
+	"\x16ListInstrumentsRequest\"R\n" +
+	"\x17ListInstrumentsResponse\x127\n" +
+	"\vinstruments\x18\x01 \x03(\v2\x15.bourse.v1.InstrumentR\vinstruments\"x\n" +
+	"\n" +
+	"Instrument\x12\x16\n" +
+	"\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x1a\n" +
+	"\bdecimals\x18\x02 \x01(\x05R\bdecimals\x12\x1b\n" +
+	"\ttick_size\x18\x03 \x01(\x03R\btickSize\x12\x19\n" +
+	"\blot_size\x18\x04 \x01(\x03R\alotSize\"\xb9\x01\n" +
 	"\x05Event\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12(\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x14.bourse.v1.EventKindR\x04kind\x12\x19\n" +
@@ -619,10 +785,11 @@ const file_bourse_v1_engine_proto_rawDesc = "" +
 	"\x13EVENT_KIND_REJECTED\x10\x02\x12\x15\n" +
 	"\x11EVENT_KIND_TRADED\x10\x03\x12\x15\n" +
 	"\x11EVENT_KIND_RESTED\x10\x04\x12\x18\n" +
-	"\x14EVENT_KIND_CANCELLED\x10\x052\xab\x01\n" +
+	"\x14EVENT_KIND_CANCELLED\x10\x052\x85\x02\n" +
 	"\rEngineService\x12L\n" +
 	"\vSubmitOrder\x12\x1d.bourse.v1.SubmitOrderRequest\x1a\x1e.bourse.v1.SubmitOrderResponse\x12L\n" +
-	"\vCancelOrder\x12\x1d.bourse.v1.CancelOrderRequest\x1a\x1e.bourse.v1.CancelOrderResponseB\x97\x01\n" +
+	"\vCancelOrder\x12\x1d.bourse.v1.CancelOrderRequest\x1a\x1e.bourse.v1.CancelOrderResponse\x12X\n" +
+	"\x0fListInstruments\x12!.bourse.v1.ListInstrumentsRequest\x1a\".bourse.v1.ListInstrumentsResponseB\x97\x01\n" +
 	"\rcom.bourse.v1B\vEngineProtoP\x01Z4github.com/fiston-user/bourse/gen/bourse/v1;boursev1\xa2\x02\x03BXX\xaa\x02\tBourse.V1\xca\x02\tBourse\\V1\xe2\x02\x15Bourse\\V1\\GPBMetadata\xea\x02\n" +
 	"Bourse::V1b\x06proto3"
 
@@ -639,34 +806,40 @@ func file_bourse_v1_engine_proto_rawDescGZIP() []byte {
 }
 
 var file_bourse_v1_engine_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_bourse_v1_engine_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_bourse_v1_engine_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_bourse_v1_engine_proto_goTypes = []any{
-	(Side)(0),                   // 0: bourse.v1.Side
-	(OrderType)(0),              // 1: bourse.v1.OrderType
-	(TimeInForce)(0),            // 2: bourse.v1.TimeInForce
-	(EventKind)(0),              // 3: bourse.v1.EventKind
-	(*SubmitOrderRequest)(nil),  // 4: bourse.v1.SubmitOrderRequest
-	(*SubmitOrderResponse)(nil), // 5: bourse.v1.SubmitOrderResponse
-	(*CancelOrderRequest)(nil),  // 6: bourse.v1.CancelOrderRequest
-	(*CancelOrderResponse)(nil), // 7: bourse.v1.CancelOrderResponse
-	(*Event)(nil),               // 8: bourse.v1.Event
+	(Side)(0),                       // 0: bourse.v1.Side
+	(OrderType)(0),                  // 1: bourse.v1.OrderType
+	(TimeInForce)(0),                // 2: bourse.v1.TimeInForce
+	(EventKind)(0),                  // 3: bourse.v1.EventKind
+	(*SubmitOrderRequest)(nil),      // 4: bourse.v1.SubmitOrderRequest
+	(*SubmitOrderResponse)(nil),     // 5: bourse.v1.SubmitOrderResponse
+	(*CancelOrderRequest)(nil),      // 6: bourse.v1.CancelOrderRequest
+	(*CancelOrderResponse)(nil),     // 7: bourse.v1.CancelOrderResponse
+	(*ListInstrumentsRequest)(nil),  // 8: bourse.v1.ListInstrumentsRequest
+	(*ListInstrumentsResponse)(nil), // 9: bourse.v1.ListInstrumentsResponse
+	(*Instrument)(nil),              // 10: bourse.v1.Instrument
+	(*Event)(nil),                   // 11: bourse.v1.Event
 }
 var file_bourse_v1_engine_proto_depIdxs = []int32{
-	0, // 0: bourse.v1.SubmitOrderRequest.side:type_name -> bourse.v1.Side
-	1, // 1: bourse.v1.SubmitOrderRequest.type:type_name -> bourse.v1.OrderType
-	2, // 2: bourse.v1.SubmitOrderRequest.time_in_force:type_name -> bourse.v1.TimeInForce
-	8, // 3: bourse.v1.SubmitOrderResponse.events:type_name -> bourse.v1.Event
-	8, // 4: bourse.v1.CancelOrderResponse.events:type_name -> bourse.v1.Event
-	3, // 5: bourse.v1.Event.kind:type_name -> bourse.v1.EventKind
-	4, // 6: bourse.v1.EngineService.SubmitOrder:input_type -> bourse.v1.SubmitOrderRequest
-	6, // 7: bourse.v1.EngineService.CancelOrder:input_type -> bourse.v1.CancelOrderRequest
-	5, // 8: bourse.v1.EngineService.SubmitOrder:output_type -> bourse.v1.SubmitOrderResponse
-	7, // 9: bourse.v1.EngineService.CancelOrder:output_type -> bourse.v1.CancelOrderResponse
-	8, // [8:10] is the sub-list for method output_type
-	6, // [6:8] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	0,  // 0: bourse.v1.SubmitOrderRequest.side:type_name -> bourse.v1.Side
+	1,  // 1: bourse.v1.SubmitOrderRequest.type:type_name -> bourse.v1.OrderType
+	2,  // 2: bourse.v1.SubmitOrderRequest.time_in_force:type_name -> bourse.v1.TimeInForce
+	11, // 3: bourse.v1.SubmitOrderResponse.events:type_name -> bourse.v1.Event
+	11, // 4: bourse.v1.CancelOrderResponse.events:type_name -> bourse.v1.Event
+	10, // 5: bourse.v1.ListInstrumentsResponse.instruments:type_name -> bourse.v1.Instrument
+	3,  // 6: bourse.v1.Event.kind:type_name -> bourse.v1.EventKind
+	4,  // 7: bourse.v1.EngineService.SubmitOrder:input_type -> bourse.v1.SubmitOrderRequest
+	6,  // 8: bourse.v1.EngineService.CancelOrder:input_type -> bourse.v1.CancelOrderRequest
+	8,  // 9: bourse.v1.EngineService.ListInstruments:input_type -> bourse.v1.ListInstrumentsRequest
+	5,  // 10: bourse.v1.EngineService.SubmitOrder:output_type -> bourse.v1.SubmitOrderResponse
+	7,  // 11: bourse.v1.EngineService.CancelOrder:output_type -> bourse.v1.CancelOrderResponse
+	9,  // 12: bourse.v1.EngineService.ListInstruments:output_type -> bourse.v1.ListInstrumentsResponse
+	10, // [10:13] is the sub-list for method output_type
+	7,  // [7:10] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_bourse_v1_engine_proto_init() }
@@ -680,7 +853,7 @@ func file_bourse_v1_engine_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bourse_v1_engine_proto_rawDesc), len(file_bourse_v1_engine_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   5,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -8,6 +8,8 @@ service EngineService {
   rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
   // CancelOrder takes a resting order out of its book.
   rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+  // ListInstruments returns every instrument the engine trades, with its tick and lot sizes.
+  rpc ListInstruments(ListInstrumentsRequest) returns (ListInstrumentsResponse);
 }
 
 message SubmitOrderRequest {
@@ -19,6 +21,7 @@ message SubmitOrderRequest {
   string price = 6; // a decimal string like "101.25", empty for a market order
   int64 qty = 7;
   bool post_only = 8;
+  string client_id = 9; // the client's own ID for the order
 }
 
 message SubmitOrderResponse {
@@ -33,6 +36,19 @@ message CancelOrderRequest {
 
 message CancelOrderResponse {
   repeated Event events = 1;
+}
+
+message ListInstrumentsRequest {}
+
+message ListInstrumentsResponse {
+  repeated Instrument instruments = 1;
+}
+
+message Instrument {
+  string symbol = 1;
+  int32 decimals = 2;
+  int64 tick_size = 3;
+  int64 lot_size = 4;
 }
 
 // Event is one thing that happened to an order. seq counts the events of a symbol, with no gaps.

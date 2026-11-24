@@ -1,4 +1,4 @@
-.PHONY: up down test test-race bench fuzz flow profile proto build run-engine
+.PHONY: up down test test-race bench fuzz flow profile proto build run-engine run-gateway
 
 up:
 	docker compose up -d --wait
@@ -38,3 +38,6 @@ build:
 
 run-engine:
 	go build -o bin/ ./cmd/engine && bin/engine
+
+run-gateway:
+	go build -o bin/ ./cmd/gateway && bin/gateway

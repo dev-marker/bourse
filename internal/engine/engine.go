@@ -2,10 +2,12 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -334,4 +336,14 @@ func (e *Engine) Instrument(sym string) (market.Instrument, bool) {
 		return market.Instrument{}, false
 	}
 	return s.book.Instrument, true
+}
+
+// Instruments returns every instrument the engine trades, sorted by symbol.
+func (e *Engine) Instruments() []market.Instrument {
+	out := make([]market.Instrument, 0, len(e.symbols))
+	for _, s := range e.symbols {
+		out = append(out, s.book.Instrument)
+	}
+	slices.SortFunc(out, func(a, b market.Instrument) int { return cmp.Compare(a.Symbol, b.Symbol) })
+	return out
 }

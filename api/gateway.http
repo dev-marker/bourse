@@ -1,0 +1,92 @@
+@gateway = http://localhost:8080
+# bin/bourse proxy signs each request with your key, and passes it on to the gateway.
+@signed = http://localhost:8079
+
+### What the exchange trades
+GET {{gateway}}/v1/instruments
+
+### A buy of 300 GLBX at 101.25
+# @name buy
+POST {{signed}}/v1/orders
+Content-Type: application/json
+
+{
+  "client_order_id": "a-1",
+  "symbol": "GLBX",
+  "side": "buy",
+  "price": "101.25",
+  "qty": 300
+}
+
+### Off the tick: GLBX moves in steps of five cents
+# @name offtick
+POST {{signed}}/v1/orders
+Content-Type: application/json
+
+{
+  "client_order_id": "a-2",
+  "symbol": "GLBX",
+  "side": "buy",
+  "price": "101.27",
+  "qty": 300
+}
+
+### Not signed at all
+# @name unsigned
+POST {{gateway}}/v1/orders
+Content-Type: application/json
+
+{
+  "client_order_id": "a-3",
+  "symbol": "GLBX",
+  "side": "buy",
+  "price": "101.25",
+  "qty": 300
+}
+
+### A signature somebody made up
+# @name forged
+POST {{gateway}}/v1/orders
+Content-Type: application/json
+X-Bourse-Key: ak_MADEUPMADEUPMADE
+X-Bourse-Timestamp: {{$timestamp}}
+X-Bourse-Signature: 9f2c4e1b7a03d58e6f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f70
+
+{
+  "client_order_id": "a-4",
+  "symbol": "GLBX",
+  "side": "buy",
+  "price": "101.25",
+  "qty": 300
+}
+
+### Signed properly, but a day ago: a replay
+# @name stale
+POST {{signed}}/v1/orders
+Content-Type: application/json
+X-Bourse-Timestamp: 1795435200
+
+{
+  "client_order_id": "a-5",
+  "symbol": "GLBX",
+  "side": "buy",
+  "price": "101.25",
+  "qty": 300
+}
+
+### Cancel the buy
+# @name cancel
+DELETE {{signed}}/v1/orders/GLBX/{{buy.response.body.order_id}}
+
+### The same order, sent again after a timeout
+# @name retry
+POST {{signed}}/v1/orders
+Content-Type: application/json
+
+{
+  "client_order_id": "r-2",
+  "symbol": "NOVA",
+  "side": "buy",
+  "price": "95.00",
+  "qty": 10
+}
