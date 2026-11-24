@@ -45,12 +45,16 @@ var (
 	ErrBadSide     = errors.New("side must be buy or sell")
 	ErrBadType     = errors.New("type must be limit or market")
 	ErrMarketRests = errors.New("a market order can't wait in the book")
+	ErrBadTIF      = errors.New("time in force must be GTC, IOC or FOK")
 )
 
 // Validate checks an order against its instrument before it gets anywhere near a book.
 func (o Order) Validate(in Instrument) error {
 	if o.Side != Buy && o.Side != Sell {
 		return ErrBadSide
+	}
+	if o.TIF < GTC || o.TIF > FOK {
+		return ErrBadTIF
 	}
 	if err := in.CheckQty(o.Qty); err != nil {
 		return err

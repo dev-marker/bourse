@@ -50,6 +50,7 @@ func TestValidate(t *testing.T) {
 		{"market ioc", Order{Side: Sell, Type: Market, TIF: IOC, Qty: 100}, nil},
 		{"market gtc", Order{Side: Sell, Type: Market, TIF: GTC, Qty: 100}, ErrMarketRests},
 		{"no side", Order{Type: Limit, TIF: GTC, Price: 2005, Qty: 100}, ErrBadSide},
+		{"no time in force", Order{Side: Buy, Type: Limit, Price: 2005, Qty: 100}, ErrBadTIF},
 	}
 	for _, tt := range tests {
 		if err := tt.o.Validate(glbx); !errors.Is(err, tt.want) {

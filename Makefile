@@ -1,4 +1,4 @@
-.PHONY: up down test test-race bench fuzz flow profile
+.PHONY: up down test test-race bench fuzz flow profile proto build run-engine
 
 up:
 	docker compose up -d --wait
@@ -27,3 +27,13 @@ profile:
 	@mkdir -p tmp
 	go test -run '^$$' -bench Flow -o tmp/book.test \
 		-cpuprofile tmp/cpu.prof -memprofile tmp/mem.prof ./internal/book/
+
+proto:
+	buf lint
+	buf generate
+
+build:
+	go build -o bin/ ./cmd/...
+
+run-engine:
+	go build -o bin/ ./cmd/engine && bin/engine
