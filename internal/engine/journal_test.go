@@ -19,7 +19,7 @@ func TestJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go e.Run(t.Context())
+	run(t, e)
 	buy, bad := order(0, 0), order(1, 1)
 	bad.Qty = -5 // turned away at the door, so it never reaches the journal
 	r, err := e.Submit(t.Context(), buy)

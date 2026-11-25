@@ -52,7 +52,7 @@ func New(engine boursev1.EngineServiceClient, keys Keys, money Money, limits *ra
 		keys:        keys,
 		money:       money,
 		limits:      limits,
-		replies:     newReplies(10 * time.Minute),
+		replies:     newReplies(10*time.Minute, 100_000),
 		instruments: map[string]market.Instrument{},
 		list:        instruments,
 		log:         log,

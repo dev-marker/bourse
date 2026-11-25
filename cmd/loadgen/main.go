@@ -12,6 +12,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,7 +39,8 @@ import (
 	"github.com/fiston-user/bourse/internal/obs"
 )
 
-const gateway = "http://localhost:8080"
+// gateway is where the requests go: the gateway, or Caddy in front of it, from GATEWAY_URL.
+var gateway = cmp.Or(os.Getenv("GATEWAY_URL"), "http://localhost:8080")
 
 // fair is where each symbol's orders go: limits a few ticks either side, IOCs a few ticks through.
 var fair = map[string]market.Price{"ACME": 42_00, "GLBX": 101_00, "NOVA": 18_50}

@@ -1,0 +1,17 @@
+# The exchange's only public door. SITE is :80 on a laptop, plain HTTP. On a server, it's the domain,
+# like exchange.example.com, and Caddy gets a certificate for it and renews it by itself.
+{$SITE} {
+	# Orders, cancels and balances go to the gateway.
+	@api path /v1/orders /v1/orders/* /v1/balances /v1/instruments
+	handle @api {
+		reverse_proxy gateway:8080
+	}
+	# Metrics are for Prometheus, on the inside, never for the internet.
+	handle /metrics {
+		respond 404
+	}
+	# Everything else is market data: the live page, the books, and the stream, WebSockets included.
+	handle {
+		reverse_proxy marketdata:8081
+	}
+}

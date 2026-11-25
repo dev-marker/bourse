@@ -58,16 +58,16 @@ func (e *Engine) takeSnapshot() error {
 
 // writeSnapshot writes snap to path, whole or not at all: a crash leaves the old one or the new one.
 func writeSnapshot(path string, snap *snapshot) error {
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(snap); err != nil {
+	b, err := encode(snap)
+	if err != nil {
 		return err
 	}
-	buf.Write(binary.LittleEndian.AppendUint32(nil, crc32.Checksum(buf.Bytes(), castagnoli)))
+	b = binary.LittleEndian.AppendUint32(b, crc32.Checksum(b, castagnoli))
 	f, err := os.Create(path + ".tmp")
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(buf.Bytes())
+	_, err = f.Write(b)
 	if err == nil {
 		err = f.Sync()
 	}
@@ -113,19 +113,11 @@ func (e *Engine) rotate() error {
 
 // restore loads the snapshot in the engine's folder, if there is one, into the empty books.
 func (e *Engine) restore() error {
-	b, err := os.ReadFile(filepath.Join(e.dir, snapshotFile))
+	snap, err := readSnapshot(filepath.Join(e.dir, snapshotFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil // a first start: everything is in the journal
 	}
 	if err != nil {
-		return err
-	}
-	n := len(b) - 4
-	if n < 0 || crc32.Checksum(b[:n], castagnoli) != binary.LittleEndian.Uint32(b[n:]) {
-		return errors.New("the snapshot is damaged")
-	}
-	var snap snapshot
-	if err := gob.NewDecoder(bytes.NewReader(b[:n])).Decode(&snap); err != nil {
 		return err
 	}
 	for _, st := range snap.Books {
@@ -142,4 +134,25 @@ func (e *Engine) restore() error {
 	}
 	e.input, e.snapped, e.startup.Snapshot = snap.Input, snap.Input, snap.Input
 	return nil
+}
+
+// encode is the snapshot's bytes: the same books always give the same bytes.
+func encode(snap *snapshot) ([]byte, error) {
+	var buf bytes.Buffer
+	err := gob.NewEncoder(&buf).Encode(snap)
+	return buf.Bytes(), err
+}
+
+// readSnapshot reads the snapshot at path, and checks it against its checksum.
+func readSnapshot(path string) (*snapshot, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	n := len(b) - 4
+	if n < 0 || crc32.Checksum(b[:n], castagnoli) != binary.LittleEndian.Uint32(b[n:]) {
+		return nil, errors.New("the snapshot is damaged")
+	}
+	snap := &snapshot{}
+	return snap, gob.NewDecoder(bytes.NewReader(b[:n])).Decode(snap)
 }

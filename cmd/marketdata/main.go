@@ -3,7 +3,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -19,27 +18,45 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/fiston-user/bourse/internal/config"
 	"github.com/fiston-user/bourse/internal/market"
 	"github.com/fiston-user/bourse/internal/marketdata"
+	"github.com/fiston-user/bourse/internal/obs"
 	"github.com/fiston-user/bourse/web"
 )
 
 const topic = "executions"
 
+// settings is everything marketdata can be told, from its environment: marketdata -h lists it.
+type settings struct {
+	Addr  string
+	Kafka string
+}
+
+func load(env *config.Env) settings {
+	return settings{
+		Addr:  env.String("ADDR", ":8081", "the stream, the books, and the live page"),
+		Kafka: env.String("KAFKA", "localhost:9092", "the Kafka brokers"),
+	}
+}
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(log); err != nil && !errors.Is(err, context.Canceled) {
+	env := config.New(os.LookupEnv)
+	cfg := load(env)
+	env.Check("marketdata", os.Args[1:])
+	if err := run(log, cfg); err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("marketdata failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(log *slog.Logger, cfg settings) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(cmp.Or(os.Getenv("KAFKA"), "localhost:9092")),
+		kgo.SeedBrokers(cfg.Kafka),
 		kgo.ConsumeTopics(topic),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()), // every execution there ever was
 	)
@@ -82,11 +99,11 @@ func run(log *slog.Logger) error {
 		}
 		return float64(n)
 	})
-	srv := &http.Server{Addr: ":8081", Handler: mux,
+	srv := &http.Server{Addr: cfg.Addr, Handler: mux,
 		BaseContext: func(net.Listener) context.Context { return ctx }} // a stop ends every stream
 	served := make(chan error, 1)
 	go func() { served <- srv.ListenAndServe() }()
-	log.Info("marketdata ready", "addr", srv.Addr, "page", "http://localhost:8081/")
+	log.Info("marketdata ready", "addr", srv.Addr, "version", obs.Version)
 	select {
 	case err = <-followed:
 	case err = <-served:

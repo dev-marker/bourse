@@ -194,19 +194,32 @@ func (e *Engine) Recovery() Recovery {
 }
 
 // Run starts the engine. It returns when ctx is done, and every command in the journal has reached its book.
-func (e *Engine) Run(ctx context.Context) {
+// On the way out, it takes a snapshot and seals the journal, so the next start has nothing to replay.
+func (e *Engine) Run(ctx context.Context) error {
 	defer close(e.stopped)
 	var wg sync.WaitGroup
 	for _, s := range e.symbols {
 		wg.Go(s.run)
 	}
 	e.record(ctx)
+	if e.err == nil && e.input > e.snapped {
+		e.err = e.takeSnapshot()
+	}
 	for _, s := range e.symbols {
 		close(s.inbox)
 	}
 	wg.Wait()
-	e.journal.Close()
-	e.synced.Close()
+	return errors.Join(e.err, e.journal.Close(), e.synced.Close())
+}
+
+// SnapshotEvery sets how many inputs there are between two snapshots. Call it before Run.
+func (e *Engine) SnapshotEvery(n uint64) {
+	e.every = n
+}
+
+// Snapshot is the last input the newest snapshot covers. Call it once Run has returned.
+func (e *Engine) Snapshot() uint64 {
+	return e.snapped
 }
 
 // record is the engine's front door. It writes every command to the journal, waits until the disk

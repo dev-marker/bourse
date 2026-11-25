@@ -28,8 +28,22 @@ func start(t testing.TB) *engine.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go e.Run(t.Context())
+	run(t, e)
 	return e
+}
+
+// run runs e until the test ends. It stops it before the test's folder is removed, because a stop
+// writes a snapshot there.
+func run(t testing.TB, e *engine.Engine) {
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan error)
+	go func() { done <- e.Run(ctx) }()
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
 }
 
 // TestManyClients has eight clients trading at once, each in a goroutine of its own.

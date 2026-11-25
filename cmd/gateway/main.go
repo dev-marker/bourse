@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
 	"github.com/fiston-user/bourse/internal/auth"
+	"github.com/fiston-user/bourse/internal/config"
 	"github.com/fiston-user/bourse/internal/gateway"
 	"github.com/fiston-user/bourse/internal/ledger"
 	"github.com/fiston-user/bourse/internal/market"
@@ -31,19 +31,46 @@ import (
 	"github.com/fiston-user/bourse/internal/ratelimit"
 )
 
+// settings is everything the gateway can be told, from its environment: gateway -h lists it.
+type settings struct {
+	Addr, AdminAddr string
+	AccountsURL     string
+	EngineAddr      string
+	Kafka           string
+	InstanceID      string
+	RateLimit       float64
+	Drain           time.Duration
+}
+
+func load(env *config.Env) settings {
+	return settings{
+		Addr:        env.String("ADDR", ":8080", "the public API"),
+		AdminAddr:   env.String("ADMIN_ADDR", ":8084", "metrics and profiles, never public"),
+		AccountsURL: env.Secret("ACCOUNTS_URL", "the accounts database, with its password"),
+		EngineAddr:  env.String("ENGINE_ADDR", "localhost:9083", "the engine's API"),
+		Kafka:       env.String("KAFKA", "localhost:9092", "the Kafka brokers"),
+		InstanceID:  env.String("INSTANCE_ID", "gateway-1", "this gateway's place in its consumer group"),
+		RateLimit:   env.Float("RATE_LIMIT", 10, "requests a second for each account"),
+		Drain:       env.Duration("DRAIN", 10*time.Second, "how long requests in flight get to finish"),
+	}
+}
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	if err := run(log); err != nil {
+	env := config.New(os.LookupEnv)
+	cfg := load(env)
+	env.Check("gateway", os.Args[1:])
+	if err := run(log, cfg); err != nil {
 		log.Error("gateway failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(log *slog.Logger, cfg settings) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := pgxpool.New(ctx, env("DATABASE_URL", "postgres://bourse:bourse@localhost:5432/accounts"))
+	db, err := pgxpool.New(ctx, cfg.AccountsURL)
 	if err != nil {
 		return err
 	}
@@ -70,9 +97,11 @@ func run(log *slog.Logger) error {
 	}
 	defer stopTracing(context.Background())
 
-	conn, err := grpc.NewClient(env("ENGINE_ADDR", "localhost:9083"),
+	conn, err := grpc.NewClient(cfg.EngineAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		// While the engine restarts, a call waits for it, within its deadline, instead of failing.
+		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)))
 	if err != nil {
 		return err
 	}
@@ -85,8 +114,9 @@ func run(log *slog.Logger) error {
 
 	// The stream settles what orders did: trades, cancels, rejections, and deposits.
 	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(env("KAFKA", "localhost:9092")),
+		kgo.SeedBrokers(cfg.Kafka),
 		kgo.ConsumerGroup("gateway"),
+		kgo.InstanceID(cfg.InstanceID), // a restart takes its old place at once, with no rebalance
 		kgo.ConsumeTopics(ledger.Executions, ledger.Deposits),
 		kgo.DisableAutoCommit(),
 	)
@@ -98,36 +128,40 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	// Each account may send this many requests a second, and twice as many at once.
-	limit, err := strconv.ParseFloat(env("RATE_LIMIT", "10"), 64)
-	if err != nil {
-		return fmt.Errorf("RATE_LIMIT: %w", err)
-	}
+	// Each account may send RateLimit requests a second, and twice as many at once.
 	cached := auth.NewCache(keys, time.Minute)
-	srv := gateway.New(engine, cached, balances, ratelimit.New(limit, 2*limit), instruments, log)
+	limits := ratelimit.New(cfg.RateLimit, 2*cfg.RateLimit)
+	srv := gateway.New(engine, cached, balances, limits, instruments, log)
 	traced := obs.Ask(otelhttp.NewHandler(obs.Traced(srv), "gateway", otelhttp.WithPublicEndpointFn(public)))
-	hs := &http.Server{Addr: ":8080", Handler: traced, ReadHeaderTimeout: 5 * time.Second,
+	hs := &http.Server{Addr: cfg.Addr, Handler: traced, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
-	admin := obs.Admin(":8084", nil)
-	errs := make(chan error, 3)
+	admin := obs.Admin(cfg.AdminAddr, nil)
+	errs, consumed := make(chan error, 2), make(chan error, 1)
 	go func() { errs <- hs.ListenAndServe() }()
 	go func() { errs <- admin.ListenAndServe() }()
-	go func() { errs <- ledger.Consume(ctx, cl, db, balances.Apply, log) }()
-	log.Info("gateway ready", "http", ":8080", "admin", ":8084", "instruments", len(instruments))
+	consuming, stopConsuming := context.WithCancel(context.Background())
+	defer stopConsuming()
+	go func() { consumed <- ledger.Consume(consuming, cl, db, balances.Apply, log) }()
+	log.Info("gateway ready", "http", cfg.Addr, "admin", cfg.AdminAddr, "version", obs.Version)
 
 	select {
 	case <-ctx.Done():
-	case err := <-errs:
+	case err = <-errs:
+	case err = <-consumed:
 		return err
 	}
 	log.Info("shutting down")
-	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// No new connections, and the requests in flight get Drain to finish, the engine's answers included.
+	drain, cancel := context.WithTimeout(context.Background(), cfg.Drain)
 	defer cancel()
-	if err := hs.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	err = errors.Join(err, hs.Shutdown(drain), admin.Shutdown(drain))
+	// Then the consumer stops, once the batch it's on is applied and committed.
+	stopConsuming()
+	if cerr := <-consumed; !errors.Is(cerr, context.Canceled) {
+		err = errors.Join(err, cerr)
 	}
 	log.Info("gateway stopped")
-	return nil
+	return err
 }
 
 // listInstruments asks the engine what it trades. The engine may still be starting, so it waits for
@@ -145,14 +179,6 @@ func listInstruments(ctx context.Context, engine boursev1.EngineServiceClient) (
 			TickSize: market.Price(in.GetTickSize()), LotSize: market.Qty(in.GetLotSize())})
 	}
 	return out, nil
-}
-
-// env returns an environment variable, or def when it isn't set.
-func env(name, def string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return def
 }
 
 // public says every request comes from outside: a trace a client started is linked, never joined, so

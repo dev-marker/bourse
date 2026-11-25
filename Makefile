@@ -1,3 +1,7 @@
+# The programs make runs get their settings from .env, when there is one: cp .env.example .env
+-include .env
+export
+
 .PHONY: up down test test-race bench fuzz flow profile proto build run-engine run-gateway run-publisher
 
 up:
@@ -89,3 +93,20 @@ cpu:
 	@go tool pprof -top -cum -show bourse/internal -nodecount 12 \
 		"http://localhost:$(PORT)/debug/pprof/profile?seconds=10" 2>/dev/null \
 		| sed -n '/flat%/,$$p' | sed 's|github.com/[^/]*/bourse/internal/||' | cut -c 31-
+
+.PHONY: images deploy backup drill
+# The exchange's image, with the commit it was built from as its version.
+images:
+	docker build -t bourse --build-arg VERSION=$$(git describe --always --dirty) .
+
+# The whole exchange, in containers, behind Caddy on http://localhost.
+deploy:
+	docker compose --profile exchange up -d --wait
+
+# The snapshot and every sealed journal, copied to the backups volume with their checksums.
+backup:
+	@docker compose --progress quiet run --rm backup
+
+# A restore drill: the backup, restored into an empty folder, and replayed from the very first input.
+drill:
+	@docker compose --progress quiet run --rm drill

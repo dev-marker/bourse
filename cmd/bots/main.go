@@ -9,6 +9,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -29,9 +30,11 @@ import (
 	"github.com/fiston-user/bourse/internal/market"
 )
 
-const (
-	gateway    = "http://localhost:8080"
-	marketdata = "http://localhost:8081"
+// Where the bots trade, and where they read the market: GATEWAY_URL and MARKETDATA_URL, or Caddy's
+// address for both, since it's in front of the two.
+var (
+	gateway    = cmp.Or(os.Getenv("GATEWAY_URL"), "http://localhost:8080")
+	marketdata = cmp.Or(os.Getenv("MARKETDATA_URL"), "http://localhost:8081")
 )
 
 // opens is where a symbol's fair value starts, when it has never traded.

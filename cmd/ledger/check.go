@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"slices"
 	"strings"
 
@@ -25,7 +24,7 @@ type balance struct {
 
 // check proves the books: in every asset, all the postings add up to zero, and once the accounts have
 // read the same events, every trader owns there exactly what the ledger says. It only reads.
-func check(ctx context.Context, db *pgxpool.Pool) error {
+func check(ctx context.Context, db *pgxpool.Pool, accountsURL string) error {
 	var txs, fees int64
 	err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM transactions),
 		(SELECT coalesce(sum(amount), 0) FROM postings WHERE account = $1)`, ledger.Fees).Scan(&txs, &fees)
@@ -45,8 +44,7 @@ func check(ctx context.Context, db *pgxpool.Pool) error {
 		fmt.Printf("  %s adds up to %s\n", b.Asset, money.Format(b.Asset, b.Amount))
 	}
 
-	accounts, err := pgxpool.New(ctx, cmp.Or(os.Getenv("ACCOUNTS_URL"),
-		"postgres://bourse:bourse@localhost:5432/accounts"))
+	accounts, err := pgxpool.New(ctx, accountsURL)
 	if err != nil {
 		return err
 	}

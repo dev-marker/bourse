@@ -1,0 +1,6 @@
+# What the build never needs: history, journals, keys, binaries, and the real .env.
+.git
+bin/
+tmp/
+var/
+.env

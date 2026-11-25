@@ -30,8 +30,12 @@ func TestDepth(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, stop := context.WithCancel(t.Context())
-	defer stop()
-	go e.Run(ctx)
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx) }()
+	defer func() {
+		stop()
+		<-done // its snapshot on the way out goes in the test's folder, before the folder goes
+	}()
 
 	markets := map[string]*marketdata.Market{}
 	want := map[string]*book.Book{}

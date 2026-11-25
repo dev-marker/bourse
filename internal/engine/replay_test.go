@@ -47,7 +47,7 @@ func TestReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Open(filepath.Join(dir, journalFile))
+	f, err := os.Open(filepath.Join(dir, fmt.Sprintf("%s.%d", journalFile, live.Snapshot())))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,4 +162,25 @@ func books(e *Engine) map[string]shot {
 		out[sym] = shot{s.seq, s.id, s.book.Orders()}
 	}
 	return out
+}
+
+// TestCleanStop: an engine that stops leaves a snapshot of every book, and seals its journal. The next
+// one starts from that snapshot, has nothing to replay, and has the same books.
+func TestCleanStop(t *testing.T) {
+	dir := t.TempDir()
+	live, err := New(dir, instruments...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trade(t, live)
+	again, err := New(dir, instruments...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := again.Recovery(); r.Snapshot != live.input || r.Replayed != 0 {
+		t.Fatalf("started at input %d and replayed %d, want %d and 0", r.Snapshot, r.Replayed, live.input)
+	}
+	if !reflect.DeepEqual(books(again), books(live)) {
+		t.Fatal("the books from the snapshot differ from the live ones")
+	}
 }

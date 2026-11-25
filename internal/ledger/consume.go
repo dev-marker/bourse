@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -21,9 +24,11 @@ import (
 type ApplyFunc func(ctx context.Context, tx pgx.Tx, evs []Event) error
 
 // Consume reads both topics with the client's consumer group, and applies every event to db, until
-// ctx is done. Each poll's events go to the database in one transaction.
+// ctx is done. Each poll's events go to the database in one transaction. A batch that's been read is
+// always applied and committed, even when ctx ends halfway: a stop never throws work away.
 func Consume(ctx context.Context, cl *kgo.Client, db *pgxpool.Pool, apply ApplyFunc,
 	log *slog.Logger) error {
+	work := context.WithoutCancel(ctx)
 	var p progress
 	for {
 		poll, cancel := context.WithTimeout(ctx, time.Second) // so we notice when we've caught up
@@ -46,11 +51,11 @@ func Consume(ctx context.Context, cl *kgo.Client, db *pgxpool.Pool, apply ApplyF
 			return err
 		}
 		start := time.Now()
-		if err := ApplyOnce(ctx, db, evs, apply); err != nil {
+		if err := applyOrSkip(work, db, evs, apply, log); err != nil {
 			return err
 		}
 		// Only now that the database has them do we tell Kafka. A crash right here reads them again.
-		if err := cl.CommitUncommittedOffsets(ctx); err != nil {
+		if err := cl.CommitUncommittedOffsets(work); err != nil {
 			return err
 		}
 		p.applied(len(evs), start)
@@ -94,6 +99,43 @@ func ApplyOnce(ctx context.Context, db *pgxpool.Pool, evs []Event, apply ApplyFu
 		return nil
 	})
 }
+
+// applyOrSkip applies the events, all at once. If one of them can't be applied, because it would take a
+// balance below zero, it applies them one at a time instead. That poison event is skipped, counted and
+// logged, and the stream goes on: one bad event must never stop everyone's settlement.
+func applyOrSkip(ctx context.Context, db *pgxpool.Pool, evs []Event, apply ApplyFunc,
+	log *slog.Logger) error {
+	err := ApplyOnce(ctx, db, evs, apply)
+	if !poisoned(err) {
+		return err
+	}
+	for _, ev := range evs {
+		err := ApplyOnce(ctx, db, []Event{ev}, apply)
+		if poisoned(err) {
+			poison.Inc()
+			log.Warn("skipped an event that can't be applied", "stream", ev.Stream, "seq", ev.Seq)
+			err = ApplyOnce(ctx, db, []Event{ev}, skip) // its seq is applied, so it's never read again
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// skip applies nothing.
+func skip(context.Context, pgx.Tx, []Event) error { return nil }
+
+// poisoned reports whether err is a CHECK constraint that failed: a balance that would go below zero.
+func poisoned(err error) bool {
+	var pe *pgconn.PgError
+	return errors.As(err, &pe) && pe.Code == "23514" // check_violation
+}
+
+var poison = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "bourse_consumer_poison_total",
+	Help: "Events skipped because they can't be applied.",
+})
 
 // decode reads every record in fetches.
 func decode(fetches kgo.Fetches) ([]Event, error) {
