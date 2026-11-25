@@ -18,6 +18,7 @@ import (
 
 	"github.com/fiston-user/bourse/internal/market"
 	"github.com/fiston-user/bourse/internal/marketdata"
+	"github.com/fiston-user/bourse/web"
 )
 
 const topic = "executions"
@@ -63,11 +64,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	srv := &http.Server{Addr: ":8081", Handler: feed.Handler(),
+	// The feed's routes all start with /v1/. Everything else is the live page.
+	mux := http.NewServeMux()
+	mux.Handle("GET /v1/", feed.Handler())
+	mux.Handle("GET /", web.Handler())
+	srv := &http.Server{Addr: ":8081", Handler: mux,
 		BaseContext: func(net.Listener) context.Context { return ctx }} // a stop ends every stream
 	served := make(chan error, 1)
 	go func() { served <- srv.ListenAndServe() }()
-	log.Info("marketdata ready", "addr", srv.Addr)
+	log.Info("marketdata ready", "addr", srv.Addr, "page", "http://localhost:8081/")
 	select {
 	case err = <-followed:
 	case err = <-served:

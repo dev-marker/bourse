@@ -52,3 +52,15 @@ run-ledger:
 .PHONY: run-marketdata
 run-marketdata:
 	go build -o bin/ ./cmd/marketdata && bin/marketdata
+
+.PHONY: bot-accounts run-bots
+# An account for every bot, a maker and a taker on each symbol: an API key in tmp/, and money to trade.
+bot-accounts:
+	@mkdir -p tmp && go build -o bin/ ./cmd/gateway ./cmd/ledger
+	@for s in ACME GLBX NOVA; do for a in maker taker; do \
+		bin/gateway key $$a-$$s > tmp/$$a-$$s.env && \
+		bin/ledger deposit $$a-$$s USD 1000000.00 $$s 100000 || exit 1; \
+	done; done
+
+run-bots:
+	go build -o bin/ ./cmd/bots && bin/bots

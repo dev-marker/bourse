@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bourse · live</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>bourse</h1>
+      <nav id="symbols">
+        <button>ACME</button>
+        <button>GLBX</button>
+        <button>NOVA</button>
+      </nav>
+      <div id="last" class="last"></div>
+      <div id="spread" class="spread"></div>
+      <div id="badge" class="badge">connecting</div>
+    </header>
+    <main>
+      <section class="chart">
+        <h2>One-minute candles</h2>
+        <canvas id="chart"></canvas>
+      </section>
+      <section class="book">
+        <h2>Book</h2>
+        <div id="book"></div>
+      </section>
+      <section class="tape">
+        <h2>Trades</h2>
+        <div id="tape"></div>
+      </section>
+    </main>
+    <footer id="stats"></footer>
+  </body>
+</html>
