@@ -76,7 +76,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		s.again(w, r, p, o)
 		return
 	}
-	code, body := s.place(o)
+	code, body := s.place(r.Context(), o)
 	s.replies.finish(p, code, body, code == http.StatusCreated)
 	write(w, code, body)
 }
@@ -120,11 +120,15 @@ func (s *Server) order(account string, req orderRequest) (market.Order, error) {
 
 // place holds what o may spend, and sends it to the engine. What it then does with the money comes
 // from the stream: trades, cancels and rejections settle there.
-func (s *Server) place(o market.Order) (int, []byte) {
-	// Not the request's context. If the client hangs up, the order still goes in, and we see what happened.
-	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout)
+func (s *Server) place(ctx context.Context, o market.Order) (int, []byte) {
+	// The request's trace, but not its cancel. If the client hangs up, the order still goes in, and we
+	// see what happened.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), engineTimeout)
 	defer cancel()
-	if err := s.money.Hold(ctx, o); err != nil {
+	hold, span := tracer.Start(ctx, "hold")
+	err := s.money.Hold(hold, o)
+	span.End()
+	if err != nil {
 		return s.holdError(err)
 	}
 	res, err := s.submit(ctx, o)

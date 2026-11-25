@@ -64,3 +64,28 @@ bot-accounts:
 
 run-bots:
 	go build -o bin/ ./cmd/bots && bin/bots
+
+.PHONY: run load-accounts
+# The whole exchange in one terminal, each line starting with its service's name. Ctrl-C stops it all.
+run: build
+	@trap 'wait; exit 0' INT; for s in engine publisher ledger gateway marketdata; do \
+		bin/$$s 2>&1 | awk -v s=$$s '{ sub(/^time=[^ ]+ /, ""); printf "%-11s%s\n", s, $$0; fflush() }' & \
+		sleep 0.5; \
+	done; wait
+
+# Twenty accounts for the load generator: an API key in tmp/ for each, and money to trade.
+load-accounts:
+	@mkdir -p tmp && go build -o bin/ ./cmd/gateway ./cmd/ledger
+	@for i in $$(seq -w 1 20); do \
+		bin/gateway key load-$$i > tmp/load-$$i.env && \
+		bin/ledger deposit load-$$i USD 10000000.00 ACME 1000000 GLBX 1000000 NOVA 1000000 \
+			>/dev/null || exit 1; \
+	done
+	@echo "20 accounts, keys in tmp/load-*.env"
+
+.PHONY: cpu
+# Ten seconds of a running service's CPU, our own functions only, the costliest first: make cpu PORT=8084
+cpu:
+	@go tool pprof -top -cum -show bourse/internal -nodecount 12 \
+		"http://localhost:$(PORT)/debug/pprof/profile?seconds=10" 2>/dev/null \
+		| sed -n '/flat%/,$$p' | sed 's|github.com/[^/]*/bourse/internal/||' | cut -c 31-

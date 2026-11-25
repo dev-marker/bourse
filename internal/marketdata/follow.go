@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
+	"github.com/fiston-user/bourse/internal/obs"
 )
 
 // Follow applies every execution on the topic, from the very first one, until ctx is done. The client
@@ -37,6 +38,7 @@ func (f *Feed) Follow(ctx context.Context, cl *kgo.Client, topic string, ready f
 		if err := fetches.Err(); err != nil {
 			return err
 		}
+		obs.Lag(fetches)
 		var xs []*boursev1.Execution
 		for r := range fetches.RecordsAll() {
 			x := new(boursev1.Execution)

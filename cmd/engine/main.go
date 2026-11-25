@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -14,16 +15,18 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
 	"github.com/fiston-user/bourse/internal/engine"
 	"github.com/fiston-user/bourse/internal/market"
+	"github.com/fiston-user/bourse/internal/obs"
 )
 
-// dataDir is where the engine keeps what it must never lose.
-const dataDir = "var"
+// dataDir is where the engine keeps what it must never lose: var, unless DATA_DIR says otherwise.
+var dataDir = cmp.Or(os.Getenv("DATA_DIR"), "var")
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -46,8 +49,14 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	stopTracing, err := obs.Tracing(ctx, "engine", 0)
+	if err != nil {
+		return err
+	}
+	defer stopTracing(context.Background())
+
 	var ready atomic.Bool
-	hs := &http.Server{Handler: health(&ready), ReadHeaderTimeout: 5 * time.Second}
+	hs := obs.Admin(":8083", health(&ready))
 	errs := make(chan error, 2)
 	go func() { errs <- hs.Serve(hl) }()
 
@@ -68,7 +77,7 @@ func run(log *slog.Logger) error {
 		eng.Run(engineCtx)
 	}()
 
-	gs := grpc.NewServer()
+	gs := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	boursev1.RegisterEngineServiceServer(gs, &server{engine: eng})
 	reflection.Register(gs)
 
@@ -93,7 +102,7 @@ func run(log *slog.Logger) error {
 }
 
 // health answers liveness and readiness checks.
-func health(ready *atomic.Bool) http.Handler {
+func health(ready *atomic.Bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "ok")

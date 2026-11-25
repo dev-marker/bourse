@@ -9,11 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -24,6 +27,7 @@ import (
 	"github.com/fiston-user/bourse/internal/market"
 	"github.com/fiston-user/bourse/internal/migrate"
 	"github.com/fiston-user/bourse/internal/money"
+	"github.com/fiston-user/bourse/internal/obs"
 	"github.com/fiston-user/bourse/internal/ratelimit"
 )
 
@@ -60,8 +64,15 @@ func run(log *slog.Logger) error {
 		return nil
 	}
 
+	stopTracing, err := obs.Tracing(ctx, "gateway", 0.01)
+	if err != nil {
+		return err
+	}
+	defer stopTracing(context.Background())
+
 	conn, err := grpc.NewClient(env("ENGINE_ADDR", "localhost:9083"),
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return err
 	}
@@ -87,13 +98,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	srv := gateway.New(engine, keys, balances, ratelimit.New(10, 20), instruments, log)
-	hs := &http.Server{Addr: ":8080", Handler: srv, ReadHeaderTimeout: 5 * time.Second,
+	// Each account may send this many requests a second, and twice as many at once.
+	limit, err := strconv.ParseFloat(env("RATE_LIMIT", "10"), 64)
+	if err != nil {
+		return fmt.Errorf("RATE_LIMIT: %w", err)
+	}
+	cached := auth.NewCache(keys, time.Minute)
+	srv := gateway.New(engine, cached, balances, ratelimit.New(limit, 2*limit), instruments, log)
+	traced := obs.Ask(otelhttp.NewHandler(obs.Traced(srv), "gateway", otelhttp.WithPublicEndpointFn(public)))
+	hs := &http.Server{Addr: ":8080", Handler: traced, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
-	errs := make(chan error, 2)
+	admin := obs.Admin(":8084", nil)
+	errs := make(chan error, 3)
 	go func() { errs <- hs.ListenAndServe() }()
+	go func() { errs <- admin.ListenAndServe() }()
 	go func() { errs <- ledger.Consume(ctx, cl, db, balances.Apply, log) }()
-	log.Info("gateway ready", "http", ":8080", "instruments", len(instruments))
+	log.Info("gateway ready", "http", ":8080", "admin", ":8084", "instruments", len(instruments))
 
 	select {
 	case <-ctx.Done():
@@ -134,3 +154,7 @@ func env(name, def string) string {
 	}
 	return def
 }
+
+// public says every request comes from outside: a trace a client started is linked, never joined, so
+// nobody outside decides what we trace.
+func public(*http.Request) bool { return true }

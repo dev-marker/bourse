@@ -3,10 +3,12 @@
 package gateway
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
@@ -78,8 +80,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.now()
 	rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 	s.mux.ServeHTTP(rec, r)
+	// The route is the pattern the request matched, never its path: an order ID in a label would
+	// make a new time series for every order.
+	route := cmp.Or(r.Pattern, "unmatched")
+	requests.WithLabelValues(route, strconv.Itoa(rec.status)).Inc()
+	latency.WithLabelValues(route).Observe(time.Since(start).Seconds())
 	took := time.Since(start).Round(time.Microsecond)
-	s.log.Info(r.Method+" "+r.URL.Path, "status", rec.status, "took", took)
+	s.log.Debug(r.Method+" "+r.URL.Path, "status", rec.status, "took", took)
 }
 
 // recorder remembers the status a handler wrote, for the log.

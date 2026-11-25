@@ -14,6 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/fiston-user/bourse/internal/market"
@@ -68,6 +71,17 @@ func run(log *slog.Logger) error {
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/", feed.Handler())
 	mux.Handle("GET /", web.Handler())
+	mux.Handle("GET /metrics", promhttp.Handler())
+	promauto.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "bourse_marketdata_clients",
+		Help: "WebSocket clients following a symbol, on every symbol.",
+	}, func() float64 {
+		n := 0
+		for _, in := range market.Listed {
+			n += feed.Clients(in.Symbol)
+		}
+		return float64(n)
+	})
 	srv := &http.Server{Addr: ":8081", Handler: mux,
 		BaseContext: func(net.Listener) context.Context { return ctx }} // a stop ends every stream
 	served := make(chan error, 1)

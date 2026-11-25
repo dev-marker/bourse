@@ -13,6 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/fiston-user/bourse/internal/book"
 	"github.com/fiston-user/bourse/internal/journal"
 	"github.com/fiston-user/bourse/internal/market"
@@ -66,12 +70,20 @@ type command struct {
 	to     *symbol // the book it's for
 	// state asks for the book's state instead, for a snapshot.
 	state chan<- bookState
+	journaled
+}
+
+// journaled is when the journal took a command, and when its fsync was done, for the order's trace.
+type journaled struct {
+	taken, synced time.Time
+	batch         int // the commands that shared the fsync
 }
 
 // answer is what a command gets back: its report, or why it never reached the book.
 type answer struct {
 	Report
 	err error
+	journaled
 }
 
 // symbol is one book, and everything only its goroutine may touch.
@@ -215,13 +227,16 @@ func (e *Engine) record(ctx context.Context) {
 		for len(batch) < queue && len(e.inbox) > 0 {
 			batch = append(batch, <-e.inbox)
 		}
+		taken := time.Now()
 		if err := e.write(batch); err != nil {
 			for _, c := range batch {
 				c.reply <- answer{err: err}
 			}
 			continue
 		}
+		synced := time.Now()
 		for _, c := range batch {
+			c.journaled = journaled{taken, synced, len(batch)}
 			c.to.inbox <- c
 		}
 	}
@@ -232,6 +247,7 @@ func (e *Engine) write(batch []command) error {
 	if e.err != nil {
 		return e.err
 	}
+	start := time.Now()
 	for _, c := range batch {
 		e.input++
 		entry := journal.Entry{Seq: e.input, Time: time.Now().UnixNano(),
@@ -244,6 +260,8 @@ func (e *Engine) write(batch []command) error {
 	if e.err = e.journal.Sync(); e.err == nil {
 		e.err = e.markSynced()
 	}
+	syncs.Observe(time.Since(start).Seconds())
+	batches.Observe(float64(len(batch)))
 	return e.err
 }
 
@@ -261,8 +279,34 @@ func (s *symbol) run() {
 			c.state <- s.state()
 			continue
 		}
-		c.reply <- answer{Report: s.apply(c.cancel, c.order)}
+		r := s.apply(c.cancel, c.order)
+		orders.WithLabelValues(kind(c), result(r)).Inc()
+		c.reply <- answer{Report: r, journaled: c.journaled}
 	}
+}
+
+// kind names a command for the metrics: a cancel, or an order by its time in force.
+func kind(c command) string {
+	if c.cancel != 0 {
+		return "cancel"
+	}
+	return [...]string{market.GTC: "gtc", market.IOC: "ioc", market.FOK: "fok"}[c.order.TIF]
+}
+
+// result is what a command came to: rejected, rested, traded, or cancelled.
+func result(r Report) string {
+	res := "cancelled"
+	for _, ev := range r.Events {
+		switch ev.Kind {
+		case Rejected:
+			return "rejected"
+		case Rested:
+			return "rested"
+		case Traded:
+			res = "traded"
+		}
+	}
+	return res
 }
 
 // apply does one input to the book. Live or replayed, every input goes through here, and nowhere else.
@@ -345,6 +389,7 @@ func (e *Engine) Cancel(ctx context.Context, sym string, id uint64, account stri
 // send puts c in the symbol's queue, and waits for the answer.
 func (e *Engine) send(ctx context.Context, s *symbol, c command) (Report, error) {
 	c.to, c.reply = s, make(chan answer, 1)
+	sent := time.Now()
 	select {
 	case e.inbox <- c:
 	case <-ctx.Done():
@@ -354,6 +399,7 @@ func (e *Engine) send(ctx context.Context, s *symbol, c command) (Report, error)
 	}
 	select {
 	case a := <-c.reply:
+		spans(ctx, sent, a)
 		return a.Report, a.err
 	case <-e.stopped:
 	}
@@ -383,4 +429,21 @@ func (e *Engine) Instruments() []market.Instrument {
 	}
 	slices.SortFunc(out, func(a, b market.Instrument) int { return cmp.Compare(a.Symbol, b.Symbol) })
 	return out
+}
+
+var tracer = otel.Tracer("bourse/engine")
+
+// spans adds a command's time in the engine to its trace, if it has one. It's called afterwards, so
+// the engine's goroutines only ever take the time.
+func spans(ctx context.Context, sent time.Time, a answer) {
+	if !trace.SpanFromContext(ctx).IsRecording() || a.err != nil {
+		return
+	}
+	span := func(name string, from, to time.Time, attrs ...attribute.KeyValue) {
+		_, s := tracer.Start(ctx, name, trace.WithTimestamp(from), trace.WithAttributes(attrs...))
+		s.End(trace.WithTimestamp(to))
+	}
+	span("wait for the journal", sent, a.taken)
+	span("journal fsync", a.taken, a.synced, attribute.Int("batch", a.batch))
+	span("match", a.synced, time.Now())
 }

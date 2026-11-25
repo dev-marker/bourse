@@ -44,7 +44,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			fail(w, http.StatusRequestEntityTooLarge, "the body is too big")
 			return
 		}
-		key, err := s.keys.Lookup(r.Context(), r.Header.Get(auth.KeyHeader))
+		ctx, span := tracer.Start(r.Context(), "look up the key")
+		key, err := s.keys.Lookup(ctx, r.Header.Get(auth.KeyHeader))
+		span.End()
 		if err != nil && !errors.Is(err, auth.ErrUnknownKey) {
 			s.log.Error("looking up a key", "err", err)
 			fail(w, http.StatusInternalServerError, "something went wrong on our side")
@@ -64,6 +66,7 @@ func (s *Server) limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ok, wait := s.limits.Allow(account(r))
 		if !ok {
+			limited.Inc()
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 			fail(w, http.StatusTooManyRequests, "too many requests")
 			return

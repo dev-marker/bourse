@@ -13,6 +13,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/fiston-user/bourse/internal/obs"
 	"github.com/fiston-user/bourse/internal/publish"
 )
 
@@ -39,6 +40,7 @@ func Consume(ctx context.Context, cl *kgo.Client, db *pgxpool.Pool, apply ApplyF
 		if err != nil {
 			return err
 		}
+		obs.Lag(fetches)
 		evs, err := decode(fetches)
 		if err != nil {
 			return err

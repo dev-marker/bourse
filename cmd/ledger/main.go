@@ -20,6 +20,7 @@ import (
 
 	"github.com/fiston-user/bourse/internal/ledger"
 	"github.com/fiston-user/bourse/internal/migrate"
+	"github.com/fiston-user/bourse/internal/obs"
 )
 
 func main() {
@@ -64,7 +65,10 @@ func run(log *slog.Logger, args []string) error {
 	if err := ledger.EnsureTopics(ctx, cl); err != nil {
 		return err
 	}
-	log.Info("ledger ready")
+	admin := obs.Admin(":8082", nil) // the ledger had no port at all: now it has one, for metrics
+	go admin.ListenAndServe()
+	defer admin.Close()
+	log.Info("ledger ready", "admin", ":8082")
 	err = ledger.Consume(ctx, cl, db, ledger.Book, log)
 	log.Info("ledger stopped")
 	return err

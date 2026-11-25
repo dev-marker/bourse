@@ -90,23 +90,24 @@ func (s *Store) Hold(ctx context.Context, o market.Order) error {
 	if err != nil {
 		return err
 	}
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE balances SET available = available - $3, held = held + $3
-			WHERE account = $1 AND asset = $2 AND available >= $3`, o.Account, asset, amount)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return ErrInsufficient
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO holds (account, client_id, symbol, asset, price, amount)
-			VALUES ($1, $2, $3, $4, $5, $6)`, o.Account, o.ClientID, o.Symbol, asset, o.Price, amount)
-		var pe *pgconn.PgError
-		if errors.As(err, &pe) && pe.Code == "23505" { // unique_violation
-			return ErrHeld
-		}
+	// The insert only gets a row if the update took the money, and if the insert fails, so does the update.
+	tag, err := s.db.Exec(ctx, `WITH taken AS (
+			UPDATE balances SET available = available - $3, held = held + $3
+			WHERE account = $1 AND asset = $2 AND available >= $3 RETURNING account)
+		INSERT INTO holds (account, client_id, symbol, asset, price, amount)
+		SELECT account, $4, $5, $2, $6, $3 FROM taken`,
+		o.Account, asset, amount, o.ClientID, o.Symbol, o.Price)
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) && pe.Code == "23505" { // unique_violation
+		return ErrHeld
+	}
+	if err != nil {
 		return err
-	})
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInsufficient
+	}
+	return nil
 }
 
 // Balance is what an account owns of one asset.

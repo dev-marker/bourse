@@ -3,6 +3,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -48,7 +49,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	follow := engine.Follow("var", market.Listed...)
+	follow := engine.Follow(cmp.Or(os.Getenv("DATA_DIR"), "var"), market.Listed...)
 	defer follow.Close()
 	p := publish.New(follow, cl, topic, marks)
 

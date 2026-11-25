@@ -1,0 +1,7 @@
+# Every dashboard in this folder is loaded at startup, and kept as the file says.
+apiVersion: 1
+providers:
+  - name: bourse
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
