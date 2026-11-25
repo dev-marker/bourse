@@ -48,3 +48,7 @@ run-publisher:
 .PHONY: run-ledger
 run-ledger:
 	go build -o bin/ ./cmd/ledger && bin/ledger
+
+.PHONY: run-marketdata
+run-marketdata:
+	go build -o bin/ ./cmd/marketdata && bin/marketdata

@@ -11,6 +11,10 @@
 //	bourse events                  every execution, as it's published to Kafka
 //	bourse events stats            how many executions arrive each second, and how late
 //	bourse events check            every symbol's seqs on the whole topic: no gaps, no duplicates
+//	bourse watch GLBX              GLBX's market data, once a second: the book, the last trade, how late
+//	bourse watch GLBX 500          the same, with 500 clients at once
+//	bourse watch GLBX stall        a client that never reads
+//	bourse watch GLBX drop         a client that loses a message now and then, on purpose
 package main
 
 import (
@@ -49,6 +53,17 @@ func run(args []string) error {
 	}
 	if len(args) > 0 && args[0] == "events" {
 		return events(strings.Join(args[1:], " "))
+	}
+	if len(args) >= 2 && args[0] == "watch" {
+		clients, mode := 1, ""
+		if len(args) == 3 {
+			if n, err := strconv.Atoi(args[2]); err == nil {
+				clients = n
+			} else {
+				mode = args[2]
+			}
+		}
+		return watch(args[1], clients, mode)
 	}
 	if len(args) == 2 && args[0] == "burst" {
 		n, _ := strconv.Atoi(args[1])

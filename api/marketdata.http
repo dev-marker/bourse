@@ -1,0 +1,9 @@
+@marketdata = http://localhost:8081
+
+### GLBX's book, the best three levels on each side
+# @name book
+GET {{marketdata}}/v1/book/GLBX?depth=3
+
+### GLBX's one-minute candles
+# @name candles
+GET {{marketdata}}/v1/candles/GLBX
