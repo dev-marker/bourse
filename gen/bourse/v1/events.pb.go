@@ -179,6 +179,68 @@ func (x *Execution) GetReason() string {
 	return ""
 }
 
+// Deposit is cash or shares coming in from outside the exchange. Deposits have a topic of their own,
+// with one partition, so a deposit's offset numbers it, with no gaps.
+type Deposit struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Account       string                 `protobuf:"bytes,1,opt,name=account,proto3" json:"account,omitempty"`
+	Asset         string                 `protobuf:"bytes,2,opt,name=asset,proto3" json:"asset,omitempty"`    // USD, or a symbol
+	Amount        int64                  `protobuf:"varint,3,opt,name=amount,proto3" json:"amount,omitempty"` // in cents, or in shares
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Deposit) Reset() {
+	*x = Deposit{}
+	mi := &file_bourse_v1_events_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Deposit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Deposit) ProtoMessage() {}
+
+func (x *Deposit) ProtoReflect() protoreflect.Message {
+	mi := &file_bourse_v1_events_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Deposit.ProtoReflect.Descriptor instead.
+func (*Deposit) Descriptor() ([]byte, []int) {
+	return file_bourse_v1_events_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Deposit) GetAccount() string {
+	if x != nil {
+		return x.Account
+	}
+	return ""
+}
+
+func (x *Deposit) GetAsset() string {
+	if x != nil {
+		return x.Asset
+	}
+	return ""
+}
+
+func (x *Deposit) GetAmount() int64 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
 var File_bourse_v1_events_proto protoreflect.FileDescriptor
 
 const file_bourse_v1_events_proto_rawDesc = "" +
@@ -200,7 +262,11 @@ const file_bourse_v1_events_proto_rawDesc = "" +
 	"\bmaker_id\x18\f \x01(\x04R\amakerId\x12#\n" +
 	"\rmaker_account\x18\r \x01(\tR\fmakerAccount\x12&\n" +
 	"\x0fmaker_client_id\x18\x0e \x01(\tR\rmakerClientId\x12\x16\n" +
-	"\x06reason\x18\x0f \x01(\tR\x06reasonB\x97\x01\n" +
+	"\x06reason\x18\x0f \x01(\tR\x06reason\"Q\n" +
+	"\aDeposit\x12\x18\n" +
+	"\aaccount\x18\x01 \x01(\tR\aaccount\x12\x14\n" +
+	"\x05asset\x18\x02 \x01(\tR\x05asset\x12\x16\n" +
+	"\x06amount\x18\x03 \x01(\x03R\x06amountB\x97\x01\n" +
 	"\rcom.bourse.v1B\vEventsProtoP\x01Z4github.com/fiston-user/bourse/gen/bourse/v1;boursev1\xa2\x02\x03BXX\xaa\x02\tBourse.V1\xca\x02\tBourse\\V1\xe2\x02\x15Bourse\\V1\\GPBMetadata\xea\x02\n" +
 	"Bourse::V1b\x06proto3"
 
@@ -216,15 +282,16 @@ func file_bourse_v1_events_proto_rawDescGZIP() []byte {
 	return file_bourse_v1_events_proto_rawDescData
 }
 
-var file_bourse_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_bourse_v1_events_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_bourse_v1_events_proto_goTypes = []any{
 	(*Execution)(nil), // 0: bourse.v1.Execution
-	(EventKind)(0),    // 1: bourse.v1.EventKind
-	(Side)(0),         // 2: bourse.v1.Side
+	(*Deposit)(nil),   // 1: bourse.v1.Deposit
+	(EventKind)(0),    // 2: bourse.v1.EventKind
+	(Side)(0),         // 3: bourse.v1.Side
 }
 var file_bourse_v1_events_proto_depIdxs = []int32{
-	1, // 0: bourse.v1.Execution.kind:type_name -> bourse.v1.EventKind
-	2, // 1: bourse.v1.Execution.side:type_name -> bourse.v1.Side
+	2, // 0: bourse.v1.Execution.kind:type_name -> bourse.v1.EventKind
+	3, // 1: bourse.v1.Execution.side:type_name -> bourse.v1.Side
 	2, // [2:2] is the sub-list for method output_type
 	2, // [2:2] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
@@ -244,7 +311,7 @@ func file_bourse_v1_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bourse_v1_events_proto_rawDesc), len(file_bourse_v1_events_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

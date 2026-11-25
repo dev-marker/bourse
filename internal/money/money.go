@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/fiston-user/bourse/internal/ledger"
 	"github.com/fiston-user/bourse/internal/market"
 )
 
@@ -21,7 +22,7 @@ import (
 var Migrations embed.FS
 
 // Cash is the asset cash is kept in: US dollars, in cents. Shares are kept under their symbol.
-const Cash = "USD"
+const Cash = ledger.Cash
 
 var (
 	ErrInsufficient = errors.New("not enough available to place this order")
@@ -60,8 +61,8 @@ func NewStore(db *pgxpool.Pool) *Store {
 	return &Store{db: db}
 }
 
-// Cost is what an order puts on hold. A sell holds its shares. A buy holds its price times its
-// quantity in cash, which is cents, because every instrument we trade is priced in cents.
+// Cost is what an order puts on hold. A sell holds its shares. A buy holds what each share can cost,
+// times its quantity, in cash, which is cents, because every instrument we trade is priced in cents.
 func Cost(o market.Order) (asset string, amount int64, err error) {
 	if o.Side == market.Sell {
 		return o.Symbol, int64(o.Qty), nil
@@ -69,10 +70,17 @@ func Cost(o market.Order) (asset string, amount int64, err error) {
 	if o.Type == market.Market {
 		return "", 0, ErrNoPrice
 	}
-	if int64(o.Qty) > math.MaxInt64/int64(o.Price) {
+	per := perShare(int64(o.Price))
+	if int64(o.Qty) > math.MaxInt64/per {
 		return "", 0, ErrTooBig
 	}
-	return Cash, int64(o.Price) * int64(o.Qty), nil
+	return Cash, per * int64(o.Qty), nil
+}
+
+// perShare is what a buy at this price holds for each share: the price, and a taker's fee on that one
+// share, rounded up. However the order fills, the fees on its trades can never add up to more.
+func perShare(price int64) int64 {
+	return price + ledger.Fee(price, ledger.TakerBps)
 }
 
 // Hold moves what o costs from available to held, and remembers it for o. If the account doesn't have
@@ -113,13 +121,6 @@ func (s *Store) Balances(ctx context.Context, account string) ([]Balance, error)
 	rows, _ := s.db.Query(ctx,
 		`SELECT asset, available, held FROM balances WHERE account = $1 ORDER BY asset`, account)
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Balance])
-}
-
-// Fund adds to what an account has available: a deposit of cash, or shares moved in.
-func (s *Store) Fund(ctx context.Context, account, asset string, amount int64) error {
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		return adjust(ctx, tx, account, asset, amount, 0)
-	})
 }
 
 // adjust changes one balance, and starts it at zero if the account never had that asset.

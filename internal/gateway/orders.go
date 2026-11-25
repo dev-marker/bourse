@@ -118,7 +118,8 @@ func (s *Server) order(account string, req orderRequest) (market.Order, error) {
 	return o, o.Validate(in)
 }
 
-// place holds what o may spend, sends it to the engine, and settles what happened.
+// place holds what o may spend, and sends it to the engine. What it then does with the money comes
+// from the stream: trades, cancels and rejections settle there.
 func (s *Server) place(o market.Order) (int, []byte) {
 	// Not the request's context. If the client hangs up, the order still goes in, and we see what happened.
 	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout)
@@ -129,15 +130,16 @@ func (s *Server) place(o market.Order) (int, []byte) {
 	res, err := s.submit(ctx, o)
 	if err != nil {
 		switch status.Code(err) {
-		case codes.InvalidArgument, codes.NotFound: // a definite no, so nothing reached a book
-			s.settle(o, 0, nil)
-		default: // we don't know if it's in the book, so the hold stays
-			s.log.Warn("the engine's answer is unknown, the hold stays", "account", o.Account,
+		case codes.InvalidArgument, codes.NotFound: // a definite no, so it never reached the journal
+			if err := s.money.Release(ctx, o.Account, o.ClientID); err != nil {
+				s.log.Error("releasing a hold", "client_order_id", o.ClientID, "err", err)
+			}
+		default: // it may be in the journal, so the stream will settle it
+			s.log.Warn("the engine's answer is unknown, the stream will settle it", "account", o.Account,
 				"client_order_id", o.ClientID)
 		}
 		return s.engineError(err)
 	}
-	s.settle(o, res.GetOrderId(), res.GetEvents())
 	return encode(http.StatusCreated, orderResponse{res.GetOrderId(), o.ClientID, events(res.GetEvents())})
 }
 
@@ -164,38 +166,6 @@ func (s *Server) holdError(err error) (int, []byte) {
 	default:
 		s.log.Error("placing a hold", "err", err)
 		return encode(http.StatusInternalServerError, problem{"something went wrong on our side"})
-	}
-}
-
-// settle moves the money for what the engine did with o. Every trade pays out of both holds, and
-// what doesn't rest in the book is released. That includes our own resting orders that the engine
-// cancelled, to stop o trading with them.
-func (s *Server) settle(o market.Order, id uint64, evs []*boursev1.Event) {
-	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout)
-	defer cancel()
-	var trades []money.Trade
-	var removed []uint64
-	rests := false
-	for _, ev := range evs {
-		switch ev.GetKind() {
-		case boursev1.EventKind_EVENT_KIND_TRADED:
-			p, _ := s.instruments[o.Symbol].ParsePrice(ev.GetPrice())
-			qty := market.Qty(ev.GetQty())
-			trades = append(trades, money.Trade{Maker: ev.GetMakerId(), Price: p, Qty: qty})
-		case boursev1.EventKind_EVENT_KIND_RESTED:
-			rests = true
-		case boursev1.EventKind_EVENT_KIND_CANCELLED:
-			if ev.GetOrderId() != id {
-				removed = append(removed, ev.GetOrderId())
-			}
-		}
-	}
-	err := s.money.Settle(ctx, o, id, trades, rests)
-	for _, r := range removed {
-		err = errors.Join(err, s.money.Release(ctx, o.Symbol, r))
-	}
-	if err != nil {
-		s.log.Error("settling an order: its holds stay until reconciliation", "order", id, "err", err)
 	}
 }
 
@@ -235,7 +205,7 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "the order ID must be a number")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), engineTimeout) // so the hold always comes back
+	ctx, cancel := context.WithTimeout(r.Context(), engineTimeout)
 	defer cancel()
 	req := &boursev1.CancelOrderRequest{Symbol: r.PathValue("symbol"), OrderId: id, Account: account(r)}
 	res, err := s.engine.CancelOrder(ctx, req)
@@ -248,9 +218,6 @@ func (s *Server) cancelOrder(w http.ResponseWriter, r *http.Request) {
 	if len(evs) == 1 && evs[0].Kind == "rejected" {
 		fail(w, http.StatusNotFound, evs[0].Reason)
 		return
-	}
-	if err := s.money.Release(ctx, r.PathValue("symbol"), id); err != nil {
-		s.log.Error("releasing a cancelled order's hold", "order", id, "err", err)
 	}
 	reply(w, http.StatusOK, orderResponse{OrderID: id, Events: evs})
 }

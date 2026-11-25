@@ -23,3 +23,11 @@ message Execution {
   string maker_client_id = 14;
   string reason = 15; // why, for a rejection
 }
+
+// Deposit is cash or shares coming in from outside the exchange. Deposits have a topic of their own,
+// with one partition, so a deposit's offset numbers it, with no gaps.
+message Deposit {
+  string account = 1;
+  string asset = 2; // USD, or a symbol
+  int64 amount = 3; // in cents, or in shares
+}

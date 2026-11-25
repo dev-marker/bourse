@@ -51,7 +51,7 @@ func (e *engine) SubmitOrder(_ context.Context, req *boursev1.SubmitOrderRequest
 }
 
 // wallet stands in for the money store. It holds buys out of one cash balance, alice's, and counts the
-// holds. Its engine never trades, so all Settle has to do is give back what didn't rest.
+// holds. What orders then do with the money comes from the stream, which this test doesn't run.
 type wallet struct {
 	mu        sync.Mutex
 	available int64
@@ -75,17 +75,13 @@ func (w *wallet) Hold(_ context.Context, o market.Order) error {
 	return nil
 }
 
-func (w *wallet) Settle(_ context.Context, o market.Order, _ uint64, _ []money.Trade, rests bool) error {
+func (w *wallet) Release(_ context.Context, _, clientID string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if !rests {
-		w.available += w.held[o.ClientID]
-		delete(w.held, o.ClientID)
-	}
+	w.available += w.held[clientID]
+	delete(w.held, clientID)
 	return nil
 }
-
-func (w *wallet) Release(context.Context, string, uint64) error { return nil }
 
 func (w *wallet) Balances(context.Context, string) ([]money.Balance, error) {
 	w.mu.Lock()
@@ -209,7 +205,7 @@ func TestRateLimit(t *testing.T) {
 }
 
 // TestHolds sends four orders, and after each one asks for alice's balances. A hold goes on only for
-// what she can pay, and it comes back when the engine says no.
+// what she can pay, fees included, and it stays until the stream says what the order did.
 func TestHolds(t *testing.T) {
 	url, _, _, c := start(t, ratelimit.New(100, 100))
 	tests := []struct {
@@ -218,13 +214,13 @@ func TestHolds(t *testing.T) {
 		want            int
 		available, held string
 	}{
-		{"rests", order, http.StatusCreated, "69625.00", "30375.00"},
+		{"rests", order, http.StatusCreated, "69607.00", "30393.00"},
 		{"more than she has", strings.NewReplacer("a-1", "a-2", "300", "3000").Replace(order),
-			http.StatusUnprocessableEntity, "69625.00", "30375.00"},
+			http.StatusUnprocessableEntity, "69607.00", "30393.00"},
 		{"rejected", strings.NewReplacer("a-1", "a-3", "}", `,"post_only":true}`).Replace(order),
-			http.StatusCreated, "69625.00", "30375.00"},
+			http.StatusCreated, "39214.00", "60786.00"},
 		{"a market buy", strings.NewReplacer("a-1", "a-4", `"price":"101.25"`, `"type":"market"`,
-			"}", `,"time_in_force":"ioc"}`).Replace(order), http.StatusBadRequest, "69625.00", "30375.00"},
+			"}", `,"time_in_force":"ioc"}`).Replace(order), http.StatusBadRequest, "39214.00", "60786.00"},
 	}
 	for _, tt := range tests {
 		if res, body := post(t, c, url, tt.body); res.StatusCode != tt.want {

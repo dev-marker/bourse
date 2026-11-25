@@ -9,52 +9,67 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/fiston-user/bourse/internal/market"
+	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
+	"github.com/fiston-user/bourse/internal/ledger"
 )
 
-// Trade is one fill of an order, as the engine reported it.
-type Trade struct {
-	Maker uint64 // the resting order it traded with
-	Price market.Price
-	Qty   market.Qty
-}
-
-// Settle records what the engine did with order o, in one transaction. id is the order ID the engine
-// gave it, or zero if it never got one. Every trade moves cash and shares between the two accounts, out
-// of their holds. Unless what's left of o rests in the book, whatever it still holds is released.
-func (s *Store) Settle(ctx context.Context, o market.Order, id uint64, trades []Trade,
-	rests bool) error {
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		c := &changes{balances: map[key]*change{}}
-		taker, err := c.find(ctx, tx, "account = $1 AND client_id = $2", o.Account, o.ClientID)
-		if err != nil {
+// Apply settles what the stream says happened, in the store's transaction. A trade gives each side back
+// the part of its hold this fill used, and then moves exactly what the ledger books. An order that's
+// cancelled or rejected gives back what it still holds. An order with no hold, because it went straight
+// to the engine, pays out of what's available.
+func (s *Store) Apply(ctx context.Context, tx pgx.Tx, evs []ledger.Event) error {
+	c := &changes{holds: map[holdKey]*hold{}, balances: map[key]*change{}}
+	for _, ev := range evs {
+		if err := c.event(ctx, tx, ev); err != nil {
 			return err
 		}
-		if id != 0 {
-			taker.orderID = &id
-		}
-		for _, t := range trades {
-			maker, err := c.find(ctx, tx, "symbol = $1 AND order_id = $2", o.Symbol, t.Maker)
+	}
+	return c.apply(ctx, tx)
+}
+
+// event adds up what one event does.
+func (c *changes) event(ctx context.Context, tx pgx.Tx, ev ledger.Event) error {
+	x := ev.Execution
+	switch x.GetKind() {
+	case boursev1.EventKind_EVENT_KIND_TRADED:
+		taker := holdKey{x.GetAccount(), x.GetClientId()}
+		maker := holdKey{x.GetMakerAccount(), x.GetMakerClientId()}
+		for _, k := range []holdKey{taker, maker} {
+			h, err := c.find(ctx, tx, k)
 			if err != nil {
 				return err
 			}
-			c.use(taker, t)
-			c.use(maker, t)
+			if h != nil {
+				c.use(h, x.GetQty())
+			}
 		}
-		if !rests {
-			c.release(taker)
-		}
-		return c.apply(ctx, tx)
-	})
-}
-
-// Release gives back what a resting order still holds, once it has left the book.
-func (s *Store) Release(ctx context.Context, symbol string, id uint64) error {
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		c := &changes{balances: map[key]*change{}}
-		h, err := c.find(ctx, tx, "symbol = $1 AND order_id = $2", symbol, id)
+	case boursev1.EventKind_EVENT_KIND_CANCELLED, boursev1.EventKind_EVENT_KIND_REJECTED:
+		h, err := c.find(ctx, tx, holdKey{x.GetAccount(), x.GetClientId()})
 		if err != nil {
 			return err
+		}
+		if h != nil {
+			c.release(h)
+		}
+	}
+	for _, p := range ev.Postings {
+		if p.Account != ledger.Bank && p.Account != ledger.Fees {
+			c.add(p.Account, p.Asset, p.Amount, 0)
+		}
+	}
+	return nil
+}
+
+// Release gives back what an order holds, when it never reached the engine.
+func (s *Store) Release(ctx context.Context, account, clientID string) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		c := &changes{holds: map[holdKey]*hold{}, balances: map[key]*change{}}
+		h, err := c.find(ctx, tx, holdKey{account, clientID})
+		if err != nil {
+			return err
+		}
+		if h == nil {
+			return ErrNoHold
 		}
 		c.release(h)
 		return c.apply(ctx, tx)
@@ -63,10 +78,13 @@ func (s *Store) Release(ctx context.Context, symbol string, id uint64) error {
 
 // hold is one order's row in holds, locked for the transaction that read it.
 type hold struct {
-	account, clientID, symbol, asset string
-	orderID                          *uint64
-	price, amount                    int64
+	holdKey
+	symbol, asset string
+	price, amount int64
 }
+
+// holdKey names an order's hold: its account, and its client order ID.
+type holdKey struct{ account, clientID string }
 
 // key names one balance: an account's cash, or its shares of one symbol.
 type key struct{ account, asset string }
@@ -77,23 +95,29 @@ type change struct{ available, held int64 }
 // changes collects what one transaction does, and writes it all at the end. Balances are written in
 // one fixed order, so two transactions that touch the same accounts can never deadlock.
 type changes struct {
-	holds    []*hold
+	holds    map[holdKey]*hold
 	balances map[key]*change
 }
 
-// find reads one hold and locks it.
-func (c *changes) find(ctx context.Context, tx pgx.Tx, where string, args ...any) (*hold, error) {
-	h := &hold{}
-	err := tx.QueryRow(ctx, `SELECT account, client_id, symbol, asset, order_id, price, amount
-		FROM holds WHERE `+where+` FOR UPDATE`, args...).
-		Scan(&h.account, &h.clientID, &h.symbol, &h.asset, &h.orderID, &h.price, &h.amount)
+// find reads an order's hold and locks it, or returns nil if the order has none.
+func (c *changes) find(ctx context.Context, tx pgx.Tx, k holdKey) (*hold, error) {
+	if k.clientID == "" {
+		return nil, nil // only orders through the gateway have a client order ID, and a hold
+	}
+	if h, ok := c.holds[k]; ok {
+		return h, nil
+	}
+	h := &hold{holdKey: k}
+	err := tx.QueryRow(ctx, `SELECT symbol, asset, price, amount FROM holds
+		WHERE account = $1 AND client_id = $2 FOR UPDATE`, k.account, k.clientID).
+		Scan(&h.symbol, &h.asset, &h.price, &h.amount)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNoHold
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	c.holds = append(c.holds, h)
+	c.holds[k] = h
 	return h, nil
 }
 
@@ -107,20 +131,15 @@ func (c *changes) add(account, asset string, available, held int64) {
 	c.balances[k].held += held
 }
 
-// use pays for one trade out of a hold. A buyer's hold pays the seller the trade's price, gets back what
-// it held above that price, and gets the shares. A seller's hold hands over the shares, for the cash.
-func (c *changes) use(h *hold, t Trade) {
-	qty, paid := int64(t.Qty), int64(t.Price)*int64(t.Qty)
+// use gives back what a hold kept for qty shares, from held to available: the shares themselves, or
+// for a buy, what each share held. The trade's own postings then take what it really cost.
+func (c *changes) use(h *hold, qty int64) {
+	part := qty
 	if h.asset == Cash {
-		held := h.price * qty // what this many shares held, at the order's own limit
-		h.amount -= held
-		c.add(h.account, Cash, held-paid, -held)
-		c.add(h.account, h.symbol, qty, 0)
-		return
+		part = qty * perShare(h.price)
 	}
-	h.amount -= qty
-	c.add(h.account, h.symbol, 0, -qty)
-	c.add(h.account, Cash, paid, 0)
+	h.amount -= part
+	c.add(h.account, h.asset, part, -part)
 }
 
 // release gives back everything a hold still holds, and the hold goes.
@@ -138,8 +157,8 @@ func (c *changes) apply(ctx context.Context, tx pgx.Tx) error {
 			_, err = tx.Exec(ctx, `DELETE FROM holds WHERE account = $1 AND client_id = $2`,
 				h.account, h.clientID)
 		} else {
-			_, err = tx.Exec(ctx, `UPDATE holds SET amount = $3, order_id = $4
-				WHERE account = $1 AND client_id = $2`, h.account, h.clientID, h.amount, h.orderID)
+			_, err = tx.Exec(ctx, `UPDATE holds SET amount = $3 WHERE account = $1 AND client_id = $2`,
+				h.account, h.clientID, h.amount)
 		}
 		if err != nil {
 			return err

@@ -44,3 +44,7 @@ run-gateway:
 
 run-publisher:
 	go build -o bin/ ./cmd/publisher && bin/publisher
+
+.PHONY: run-ledger
+run-ledger:
+	go build -o bin/ ./cmd/ledger && bin/ledger

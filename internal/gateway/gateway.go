@@ -21,11 +21,10 @@ type Keys interface {
 	Lookup(ctx context.Context, id string) (auth.Key, error)
 }
 
-// Money holds what orders may spend, and moves it when they trade.
+// Money holds what orders may spend. What they do with it comes from the stream, not from here.
 type Money interface {
 	Hold(ctx context.Context, o market.Order) error
-	Settle(ctx context.Context, o market.Order, id uint64, trades []money.Trade, rests bool) error
-	Release(ctx context.Context, symbol string, id uint64) error
+	Release(ctx context.Context, account, clientID string) error
 	Balances(ctx context.Context, account string) ([]money.Balance, error)
 }
 

@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	boursev1 "github.com/fiston-user/bourse/gen/bourse/v1"
 	"github.com/fiston-user/bourse/internal/auth"
 	"github.com/fiston-user/bourse/internal/gateway"
+	"github.com/fiston-user/bourse/internal/ledger"
 	"github.com/fiston-user/bourse/internal/market"
 	"github.com/fiston-user/bourse/internal/migrate"
 	"github.com/fiston-user/bourse/internal/money"
@@ -57,18 +59,6 @@ func run(log *slog.Logger) error {
 		fmt.Printf("BOURSE_KEY=%s\nBOURSE_SECRET=%s\n", k.ID, k.Secret)
 		return nil
 	}
-	if len(os.Args) == 5 && os.Args[1] == "fund" { // gateway fund ACCOUNT ASSET AMOUNT: a demo deposit
-		account, asset := os.Args[2], os.Args[3]
-		amount, err := money.Parse(asset, os.Args[4])
-		if err != nil {
-			return err
-		}
-		if err := balances.Fund(ctx, account, asset, amount); err != nil {
-			return err
-		}
-		fmt.Printf("%s +%s %s\n", account, money.Format(asset, amount), asset)
-		return nil
-	}
 
 	conn, err := grpc.NewClient(env("ENGINE_ADDR", "localhost:9083"),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -82,11 +72,27 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	// The stream settles what orders did: trades, cancels, rejections, and deposits.
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(env("KAFKA", "localhost:9092")),
+		kgo.ConsumerGroup("gateway"),
+		kgo.ConsumeTopics(ledger.Executions, ledger.Deposits),
+		kgo.DisableAutoCommit(),
+	)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+	if err := ledger.EnsureTopics(ctx, cl); err != nil {
+		return err
+	}
+
 	srv := gateway.New(engine, keys, balances, ratelimit.New(10, 20), instruments, log)
 	hs := &http.Server{Addr: ":8080", Handler: srv, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
-	errs := make(chan error, 1)
+	errs := make(chan error, 2)
 	go func() { errs <- hs.ListenAndServe() }()
+	go func() { errs <- ledger.Consume(ctx, cl, db, balances.Apply, log) }()
 	log.Info("gateway ready", "http", ":8080", "instruments", len(instruments))
 
 	select {
